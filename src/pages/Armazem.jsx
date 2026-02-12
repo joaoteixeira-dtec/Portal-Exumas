@@ -2,10 +2,11 @@ import { useOrders, useUpdateOrder } from '../hooks/useOrders'
 import { useState, useMemo, useEffect, useRef, Component } from 'react'
 import { ORDER_STATUS, statusBadge, fmtDate, todayISO, isBulkBatchOrder, isBulkSubOrder } from '../lib/utils'
 import { useAuth } from '../contexts/AuthProvider'
+import { useWarehouse } from '../contexts/WarehouseContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { PageGuard } from '../components/PageGuard'
 import { db } from '../lib/firebase'
-import { doc, updateDoc, writeBatch } from 'firebase/firestore'
+import { doc, updateDoc, writeBatch, collection, query, where, getDocs } from 'firebase/firestore'
 // Hooks de índices para evitar N+1 queries
 import { useLocationsIndex, useContractsIndex, useUsersIndex } from '../lib/useFirestoreIndexes'
 
@@ -157,6 +158,7 @@ export default function Armazem() {
 function ArmazemInner() {
   const { profile } = useAuth()
   const { can } = usePermissions()
+  const { filterByWarehouse } = useWarehouse() || {}
   const upd = useUpdateOrder()
   
   // Permissões
@@ -164,17 +166,16 @@ function ArmazemInner() {
   const canClose = can('warehouse.close')
 
   /* ---------- queries por estado ---------- */
-  const esperaRaw   = useOrders('ESPERA').data   || []
-  const prepRaw     = useOrders('PREP').data     || []
-  const faltasRaw   = useOrders('FALTAS').data   || []
-  const aFaturarRaw = useOrders('A_FATURAR').data|| []
+  const esperaAll   = useOrders('ESPERA').data   || []
+  const prepAll     = useOrders('PREP').data     || []
+  const faltasAll   = useOrders('FALTAS').data   || []
+  const aFaturarAll = useOrders('A_FATURAR').data|| []
 
-  // DEBUG: log para ver os dados que chegam
-  useEffect(() => {
-    console.log('[Armazem] esperaRaw:', esperaRaw.length, 'prepRaw:', prepRaw.length)
-    console.log('[Armazem] Sample espera:', esperaRaw[0])
-    console.log('[Armazem] Sample prep:', prepRaw[0])
-  }, [esperaRaw.length, prepRaw.length])
+  // Filtrar por armazém ativo
+  const esperaRaw   = useMemo(() => filterByWarehouse ? filterByWarehouse(esperaAll) : esperaAll, [esperaAll, filterByWarehouse])
+  const prepRaw     = useMemo(() => filterByWarehouse ? filterByWarehouse(prepAll) : prepAll, [prepAll, filterByWarehouse])
+  const faltasRaw   = useMemo(() => filterByWarehouse ? filterByWarehouse(faltasAll) : faltasAll, [faltasAll, filterByWarehouse])
+  const aFaturarRaw = useMemo(() => filterByWarehouse ? filterByWarehouse(aFaturarAll) : aFaturarAll, [aFaturarAll, filterByWarehouse])
 
   // Pedido em massa: o Armazém prepara o LOTE (BULK_BATCH) agregado, não as sub-encomendas.
   // Excluir subencomendas que estão ligadas a um BULK_BATCH (linkedToBulkBatchId)
@@ -308,6 +309,18 @@ function ArmazemInner() {
     () => (aFaturar || []).filter(o => (o.warehouseClosedAt || '').slice(0,10) === todayISO()),
     [aFaturar]
   )
+
+  /* ---------- devoluções / produtos retornados ---------- */
+  const allOrdersRaw = useOrders().data || []
+  const allOrders = useMemo(() => filterByWarehouse ? filterByWarehouse(allOrdersRaw) : allOrdersRaw, [allOrdersRaw, filterByWarehouse])
+  const returnsOrders = useMemo(() => 
+    allOrders.filter(o => {
+      const items = o.delivery?.items || []
+      return items.some(it => Number(it.returnedQty) > 0)
+    }),
+    [allOrders]
+  )
+  const [showReturns, setShowReturns] = useState(false)
 
   /* ---------- pesquisa ---------- */
   const [search, setSearch] = useState('')
@@ -873,6 +886,15 @@ function ArmazemInner() {
               <div className="chip">Iniciadas: {totalIniciadas}</div>
               <div className="chip">Pendentes: {totalPendentes}</div>
               <div className="chip">Hoje: {totalHoje}</div>
+              {returnsOrders.length > 0 && (
+                <div 
+                  className="chip" 
+                  style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', cursor: 'pointer', fontWeight: 600 }}
+                  onClick={() => setShowReturns(!showReturns)}
+                >
+                  ↩ Devoluções: {returnsOrders.length}
+                </div>
+              )}
               <input
                 placeholder="Pesquisar cliente/contrato/local…"
                 value={search}
@@ -882,6 +904,49 @@ function ArmazemInner() {
             </div>
           </div>
         </div>
+
+        {/* Devoluções / Produtos retornados */}
+        {showReturns && returnsOrders.length > 0 && (
+          <div className="span-12">
+            <div className="card" style={{ padding: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h3 style={{ margin: 0, fontSize: '16px' }}>↩️ Produtos Devolvidos</h3>
+                <button 
+                  onClick={() => setShowReturns(false)} 
+                  style={{ background: 'none', border: 'none', color: 'var(--ui-text-dim)', cursor: 'pointer', fontSize: '16px' }}
+                >✕</button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {returnsOrders.map(o => {
+                  const del = o.delivery || {}
+                  const retItems = (del.items || []).filter(it => Number(it.returnedQty) > 0)
+                  const reasonLabels = { danificado: 'Danificado', recusado: 'Recusado', erro_quantidade: 'Erro qtd', erro_produto: 'Produto errado', validade: 'Validade', temperatura: 'Temperatura', outro: 'Outro' }
+                  
+                  return (
+                    <div key={o.id} style={{ border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px', background: 'rgba(239,68,68,0.03)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--ui-text)' }}>{o.clientName || '—'}</span>
+                        <span style={{ fontSize: '12px', color: 'var(--ui-text-dim)' }}>{fmtDate(o.deliveredAt || o.date)} • {del.recordedBy || 'Motorista'}</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {retItems.map((it, i) => (
+                          <div key={i} style={{ display: 'flex', gap: '12px', alignItems: 'center', fontSize: '13px', padding: '4px 8px', background: 'rgba(239,68,68,0.06)', borderRadius: '4px' }}>
+                            <span style={{ fontWeight: 500, color: 'var(--ui-text)', flex: 1 }}>{it.name} {it.unit && <span style={{ color: 'var(--ui-text-dim)' }}>({it.unit})</span>}</span>
+                            <span style={{ color: '#ef4444', fontWeight: 600 }}>↩ {it.returnedQty}</span>
+                            <span style={{ color: 'var(--ui-text-dim)', fontSize: '11px', minWidth: 80 }}>{reasonLabels[it.returnReason] || it.returnReason || '—'}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {del.notes && (
+                        <div style={{ fontSize: '12px', color: '#f59e0b', marginTop: '6px' }}>💬 {del.notes}</div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* colunas */}
         <div className="span-4 card kanban-col">

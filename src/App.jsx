@@ -6,6 +6,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './contexts/AuthProvider'
 import { NotificationsProvider } from './contexts/NotificationsContext'
+import { WarehouseProvider } from './contexts/WarehouseContext'
 import { getDefaultRoute } from './config/navigation'
 
 // Layout
@@ -78,7 +79,9 @@ export default function App() {
         element={
           <ProtectedRoute>
             <NotificationsProvider>
-              <AppLayout />
+              <WarehouseProvider>
+                <AppLayout />
+              </WarehouseProvider>
             </NotificationsProvider>
           </ProtectedRoute>
         }

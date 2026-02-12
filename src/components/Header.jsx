@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthProvider'
 import { useNotifications } from '../contexts/NotificationsContext'
+import { useWarehouse } from '../contexts/WarehouseContext'
 import { useTheme } from '../theme'
 import logoExumas from '../Logo Exumas - branco.png'
 
@@ -32,6 +33,7 @@ function roleLabel(role) {
 export default function Header({ onToggleSidebar, sidebarCollapsed }) {
   const { profile, logout } = useAuth()
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications()
+  const wh = useWarehouse()
   const { isDark, toggleTheme, theme } = useTheme()
   const nav = useNavigate()
   
@@ -101,6 +103,32 @@ export default function Header({ onToggleSidebar, sidebarCollapsed }) {
 
       {/* Área do utilizador */}
       <div className="header-user-area">
+        {/* Warehouse Selector */}
+        {wh && wh.canSwitchWarehouse && (
+          <div className="warehouse-selector">
+            <span className="warehouse-selector-icon">🏭</span>
+            <select
+              value={wh.activeWarehouse || ''}
+              onChange={e => wh.setActiveWarehouse(e.target.value || null)}
+              className="warehouse-selector-select"
+              title="Armazém ativo"
+            >
+              <option value="">Todos</option>
+              {Object.entries(wh.warehouseNames || {}).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Warehouse badge (non-switchers) */}
+        {wh && !wh.canSwitchWarehouse && wh.activeWarehouse && (
+          <div className="warehouse-badge-fixed" title="Seu armazém">
+            <span>🏭</span>
+            <span>{wh.warehouseNames?.[wh.activeWarehouse] || wh.activeWarehouse}</span>
+          </div>
+        )}
+
         {/* Theme Toggle */}
         <button
           type="button"

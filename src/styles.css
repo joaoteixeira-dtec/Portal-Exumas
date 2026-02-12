@@ -4585,20 +4585,157 @@ tr:hover .copy-btn {
   opacity: 0.3;
 }
 
-/* Route Card */
-.rotas-route-card {
-  padding: var(--space-3);
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: var(--ui-radius);
+/* ===== ViewRouteModal (vrm) ===== */
+.vrm-chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--ui-text-dim);
+  white-space: nowrap;
+}
+.vrm-chip-accent {
+  background: rgba(249,115,22,0.12);
+  border-color: rgba(249,115,22,0.25);
+  color: #fb923c;
+  font-weight: 700;
+}
+.vrm-delivery-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
   cursor: pointer;
   transition: all 0.15s ease;
 }
+.vrm-delivery-card:hover {
+  background: rgba(249,115,22,0.08);
+  border-color: rgba(249,115,22,0.3);
+  transform: translateY(-1px);
+}
+.vrm-delivery-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(249,115,22,0.15);
+  color: #fb923c;
+  font-weight: 800;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.vrm-delivery-client {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--ui-text);
+  margin-bottom: 2px;
+}
+.vrm-delivery-location {
+  font-size: 0.78rem;
+  color: var(--ui-text-dim);
+}
+.vrm-delivery-addr {
+  font-size: 0.72rem;
+  color: var(--ui-text-dim);
+  opacity: 0.7;
+}
+.vrm-delivery-date {
+  font-size: 0.7rem;
+  color: #fb923c;
+  font-weight: 500;
+  margin-top: 2px;
+}
+.vrm-delivery-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.vrm-item-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 500;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--ui-text-dim);
+}
+.vrm-item-more {
+  color: #fb923c;
+  border-color: rgba(249,115,22,0.2);
+  background: rgba(249,115,22,0.08);
+}
+.vrm-delivery-arrow {
+  font-size: 1.3rem;
+  color: var(--ui-text-dim);
+  opacity: 0.3;
+  align-self: center;
+  transition: opacity 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.vrm-delivery-card:hover .vrm-delivery-arrow {
+  opacity: 1;
+  color: #fb923c;
+}
+
+/* Purple variants for pickups */
+.vrm-chip--purple {
+  background: rgba(139,92,246,0.12);
+  border-color: rgba(139,92,246,0.25);
+  color: #a78bfa;
+  font-weight: 600;
+}
+.vrm-chip--purple-accent {
+  background: rgba(139,92,246,0.12);
+  border-color: rgba(139,92,246,0.25);
+  color: #a78bfa;
+  font-weight: 700;
+}
+.vrm-delivery-card--purple:hover {
+  background: rgba(139,92,246,0.08);
+  border-color: rgba(139,92,246,0.3);
+}
+.vrm-delivery-index--purple {
+  background: rgba(139,92,246,0.15);
+  color: #a78bfa;
+}
+.vrm-delivery-arrow--purple {}
+.vrm-delivery-card--purple:hover .vrm-delivery-arrow {
+  color: #a78bfa;
+}
+
+/* Route Card */
+.rotas-route-card {
+  padding: var(--space-3);
+  background: rgba(249, 115, 22, 0.06);
+  border: 1px solid rgba(249, 115, 22, 0.2);
+  border-radius: var(--ui-radius);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-left: 3px solid #f97316;
+}
 
 .rotas-route-card:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(249, 115, 22, 0.3);
+  background: rgba(249, 115, 22, 0.12);
+  border-color: rgba(249, 115, 22, 0.4);
   transform: translateY(-1px);
+}
+
+.rotas-route-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #fb923c;
+  margin-bottom: 2px;
 }
 
 .rotas-route-vehicle {
@@ -4627,6 +4764,53 @@ tr:hover .copy-btn {
 
 .rotas-route-driver {
   font-size: 0.75rem;
+  color: var(--ui-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pickup Card */
+.rotas-pickup-card {
+  padding: var(--space-3);
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: var(--ui-radius);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-left: 3px solid #8b5cf6;
+}
+
+.rotas-pickup-card:hover {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+.rotas-pickup-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #a78bfa;
+  margin-bottom: 2px;
+}
+
+.rotas-pickup-carrier {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--ui-text);
+  margin-bottom: 4px;
+}
+
+.rotas-pickup-time {
+  font-size: 0.75rem;
+  color: #a78bfa;
+  font-weight: 500;
+}
+
+.rotas-pickup-location {
+  font-size: 0.72rem;
   color: var(--ui-text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -6025,6 +6209,149 @@ tr:hover .copy-btn {
   border-color: var(--accent);
 }
 
+/* ====== Delivery Recording Modal (Motorista) ====== */
+.delivery-modal {
+  max-width: 560px !important;
+}
+
+.delivery-items-section {
+  margin-bottom: var(--space-4);
+}
+
+.delivery-items-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ui-text);
+  margin-bottom: 10px;
+}
+
+.delivery-items-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.delivery-item-row {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  transition: border-color 0.2s ease;
+}
+
+.delivery-item-row.has-issue {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.delivery-item-name {
+  font-weight: 500;
+  color: var(--ui-text);
+  margin-bottom: 8px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.delivery-item-unit {
+  font-size: 11px;
+  color: var(--ui-text-dim);
+  background: rgba(255,255,255,0.05);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.delivery-item-fields {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.delivery-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.delivery-field label {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--ui-text-dim);
+  letter-spacing: 0.5px;
+}
+
+.delivery-field-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ui-text-dim);
+  padding: 6px 8px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 6px;
+  text-align: center;
+}
+
+.delivery-qty-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  transition: border-color 0.2s;
+}
+
+.delivery-qty-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.delivery-qty-input.has-return {
+  border-color: #ef4444;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.delivery-return-reason {
+  margin-top: 8px;
+}
+
+.delivery-reason-select {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--ui-bg);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: var(--ui-text);
+  font-size: 12px;
+}
+
+.delivery-reason-select:focus {
+  outline: none;
+  border-color: #ef4444;
+}
+
+.delivery-discrepancy-alert {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+/* Pulse animation for discrepancy badge */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 /* Google Maps Route Generator */
 .driver-maps-section {
   margin-top: var(--space-4);
@@ -6337,6 +6664,132 @@ body.theme-light ::-webkit-scrollbar-thumb {
 
 body.theme-light ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* ==========================================================================
+   WAREHOUSE SELECTOR & CROSS-WAREHOUSE BADGES
+   ========================================================================== */
+
+/* Header warehouse selector (admin/gestor) */
+.warehouse-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 8px;
+  padding: 4px 10px;
+  transition: all 0.2s ease;
+}
+.warehouse-selector:hover {
+  border-color: rgba(139, 92, 246, 0.5);
+  background: rgba(139, 92, 246, 0.15);
+}
+.warehouse-selector-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+.warehouse-selector-select {
+  background: transparent;
+  border: none;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  padding: 2px 4px;
+  min-width: 100px;
+}
+.warehouse-selector-select option {
+  background: var(--ui-bg);
+  color: var(--ui-text);
+}
+
+/* Warehouse badge for non-switchers */
+.warehouse-badge-fixed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8b5cf6;
+}
+
+/* Mini badge na tabela do Pipeline */
+.warehouse-mini-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  vertical-align: middle;
+}
+
+/* Cross-warehouse warning icon */
+.cross-warehouse-mini {
+  margin-left: 2px;
+  font-size: 11px;
+  cursor: help;
+  vertical-align: middle;
+}
+
+/* Cross-warehouse alert box in OrderDetail */
+.cross-warehouse-alert {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-left: 3px solid #f59e0b;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #f59e0b;
+}
+
+/* Cross-warehouse select highlight */
+.cross-warehouse-select {
+  border: 2px solid #f59e0b !important;
+  background: rgba(245, 158, 11, 0.08) !important;
+  border-radius: 6px;
+}
+
+/* Cross-warehouse chip */
+.cross-warehouse-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  vertical-align: middle;
+}
+
+/* Light theme overrides */
+body.theme-light .warehouse-selector {
+  background: rgba(139, 92, 246, 0.06);
+  border-color: rgba(139, 92, 246, 0.2);
+}
+body.theme-light .warehouse-badge-fixed {
+  background: rgba(139, 92, 246, 0.06);
+}
+body.theme-light .warehouse-mini-badge {
+  background: rgba(139, 92, 246, 0.08);
+}
+body.theme-light .cross-warehouse-alert {
+  background: rgba(245, 158, 11, 0.06);
 }
 
 /* End of styles */

@@ -36,8 +36,8 @@ export const CreatePickupPanel = ({
         <label className="field">
           <span>Transportadora</span>
           <select value={carrier} onChange={e => setCarrier(e.target.value)}>
-            <option value={CARRIERS.SANTOS}>
-              {CARRIER_NAMES[CARRIERS.SANTOS]}
+            <option value={CARRIERS.SANTOSVALE}>
+              {CARRIER_NAMES[CARRIERS.SANTOSVALE]}
             </option>
             <option value={CARRIERS.STEFF}>
               {CARRIER_NAMES[CARRIERS.STEFF]}

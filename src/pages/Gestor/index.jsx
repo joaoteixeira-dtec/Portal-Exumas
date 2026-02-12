@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useOrders } from '../../hooks/useOrders'
 import { useClients } from '../../hooks/useCommon'
 import { useAuth } from '../../contexts/AuthProvider'
+import { useWarehouse } from '../../contexts/WarehouseContext'
 import { Tabs } from '../../components/ui/index.jsx'
 
 // Sub-componentes
@@ -24,8 +25,10 @@ export default function Gestor() {
   const { profile, user } = useAuth()
 
   // Data global
+  const { filterByWarehouse } = useWarehouse() || {}
   const ordersQ = useOrders()
-  const all = useMemo(() => ordersQ.data || [], [ordersQ.data])
+  const allRaw = useMemo(() => ordersQ.data || [], [ordersQ.data])
+  const all = useMemo(() => filterByWarehouse ? filterByWarehouse(allRaw) : allRaw, [allRaw, filterByWarehouse])
   const clientsAll = useClients().data || []
 
   // Map clientId -> username para mostrar nome curto no Pipeline

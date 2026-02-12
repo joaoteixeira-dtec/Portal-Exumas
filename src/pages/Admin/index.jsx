@@ -22,6 +22,7 @@ import {
 } from '../../lib/orderHelpers'
 import { useLocationsIndex, useContractsIndex } from '../../lib/useFirestoreIndexes'
 import { PERMISSION_GROUPS } from '../../config/permissions'
+import { WAREHOUSE_NAMES } from '../../config/routes'
 
 // ==================== CONSTANTS ====================
 
@@ -1323,7 +1324,7 @@ function UsersTab({ users }) {
   const qc = useQueryClient()
   const [tab, setTab] = useState('staff')
   const [search, setSearch] = useState('')
-  const [newUser, setNewUser] = useState({ name: '', username: '', role: 'gestor', active: true })
+  const [newUser, setNewUser] = useState({ name: '', username: '', role: 'gestor', active: true, defaultWarehouse: null })
   const [editUser, setEditUser] = useState(null)
 
   // Separar clientes de funcionários
@@ -1344,7 +1345,7 @@ function UsersTab({ users }) {
     mutationFn: async () => addDoc(collection(db, 'users'), { ...newUser, createdAt: new Date().toISOString() }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['users'] })
-      setNewUser({ name: '', username: '', role: 'gestor', active: true })
+      setNewUser({ name: '', username: '', role: 'gestor', active: true, defaultWarehouse: null })
     }
   })
 
@@ -1501,6 +1502,11 @@ function UsersTab({ users }) {
                       Inativo
                     </span>
                   )}
+                  {u.defaultWarehouse && (
+                    <span className="warehouse-mini-badge">
+                      {WAREHOUSE_NAMES[u.defaultWarehouse]?.split(' ')[0] || u.defaultWarehouse}
+                    </span>
+                  )}
                   <button 
                     onClick={() => setEditUser(u)}
                     style={{
@@ -1603,6 +1609,26 @@ function UsersTab({ users }) {
                 <option value="motorista">Motorista</option>
               </select>
             )}
+            {tab === 'staff' && (
+              <select
+                value={newUser.defaultWarehouse || ''}
+                onChange={e => setNewUser({ ...newUser, defaultWarehouse: e.target.value || null })}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--ui-border)',
+                  background: 'var(--ui-bg)',
+                  color: 'var(--ui-text)',
+                  fontSize: '13px'
+                }}
+              >
+                <option value="">Armazém (todos)</option>
+                {Object.entries(WAREHOUSE_NAMES).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            )}
             <button
               onClick={() => {
                 if (tab === 'clients') {
@@ -1700,6 +1726,27 @@ function UsersTab({ users }) {
               <option value="rotas">Rotas</option>
               <option value="motorista">Motorista</option>
             </select>
+            <div style={{ fontSize: '11px', color: 'var(--ui-text-dim)', marginBottom: '-8px', marginTop: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Armazém por defeito
+            </div>
+            <select
+              value={editUser.defaultWarehouse || ''}
+              onChange={e => setEditUser({ ...editUser, defaultWarehouse: e.target.value || null })}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--ui-border)',
+                background: 'var(--ui-bg)',
+                color: 'var(--ui-text)',
+                fontSize: '13px'
+              }}
+            >
+              <option value="">Sem armazém (todos)</option>
+              {Object.entries(WAREHOUSE_NAMES).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
             <button
               onClick={() => updateUserMut.mutate({
                 id: editUser.id,
@@ -1707,7 +1754,8 @@ function UsersTab({ users }) {
                   name: editUser.name,
                   username: editUser.username,
                   email: editUser.email,
-                  role: editUser.role
+                  role: editUser.role,
+                  defaultWarehouse: editUser.defaultWarehouse || null,
                 }
               })}
               style={{

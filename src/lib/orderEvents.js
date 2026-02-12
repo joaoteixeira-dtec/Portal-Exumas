@@ -28,9 +28,7 @@ export async function logOrderEvent({ orderId, type, role, profile, meta }) {
   }
 
   try {
-    console.log(`🔍 logOrderEvent: Creating ${type} event for order ${orderId}`)
     const docRef = await addDoc(col, payload)
-    console.log(`✅ logOrderEvent: Event created with ID ${docRef.id}`)
     return docRef
   } catch (err) {
     console.error(`❌ logOrderEvent failed for ${type}:`, err?.code, err?.message)

@@ -5,13 +5,14 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { doc, updateDoc, deleteDoc, getDocs, query, collection, where, writeBatch, addDoc } from 'firebase/firestore'
+import { doc, updateDoc, deleteDoc, getDocs, getDoc, query, collection, where, writeBatch, addDoc } from 'firebase/firestore'
 import { db } from '../../../lib/firebase'
 import { useOrderEvents } from '../../../hooks/useOrderEvents'
 import { usePermissions } from '../../../hooks/usePermissions'
 import { Can } from '../../../components/PermissionGate'
 import { ORDER_STATUS, statusBadge, fmtDate, CARRIERS } from '../../../lib/utils'
 import { logOrderEvent } from '../../../lib/orderEvents'
+import { WAREHOUSES, WAREHOUSE_NAMES, WAREHOUSE_SHORT } from '../../../config/routes'
 import {
   isCancelledStatus, isDeliveredStatus, isBulkSubOrder, isBulkBatchOrder,
   getOrderClientId, orderNoLabel, orderTotalValue, itemsArray, itemsOf,
@@ -135,9 +136,16 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
   // Mutations
   const moveMut = useMutation({
     mutationFn: async ({ id, to, fromStatus }) => {
-      console.log(`📋 Moving order ${id} from ${fromStatus} to ${to}`)
+      // Validar carrier antes de enviar para preparação
+      if (to === 'PREP') {
+        const snap = await getDoc(doc(db, 'orders', id))
+        const orderData = snap.data()
+        if (!orderData?.carrier) {
+          throw new Error('⚠️ Transportadora obrigatória!\n\nDefine primeiro a transportadora antes de enviar para preparação.')
+        }
+      }
+      
       await updateDoc(doc(db, 'orders', id), { status: to })
-      console.log(`🔍 Logging SEND_TO_PREP event...`)
       await logOrderEvent({
         orderId: id,
         type: 'SEND_TO_PREP',
@@ -148,7 +156,6 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
           toStatus: to,
         }
       })
-      console.log(`✅ Event logged`)
     },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['orders'] })
@@ -158,14 +165,24 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
 
   const carrierMut = useMutation({
     mutationFn: async ({ id, carrier }) => updateDoc(doc(db, 'orders', id), { carrier: carrier || null }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] })
+    onSuccess: (_, { id, carrier }) => {
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      // Atualizar o detailOrder local para refletir a mudança imediatamente
+      setDetailOrder(prev => prev && prev.id === id ? { ...prev, carrier: carrier || null } : prev)
+    }
+  })
+
+  const armazemMut = useMutation({
+    mutationFn: async ({ id, armazem }) => updateDoc(doc(db, 'orders', id), { armazem: armazem || null }),
+    onSuccess: (_, { id, armazem }) => {
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      setDetailOrder(prev => prev && prev.id === id ? { ...prev, armazem: armazem || null } : prev)
+    }
   })
 
   const cancelMut = useMutation({
     mutationFn: async (id) => {
-      console.log(`🛑 Cancelling order ${id}`)
       await updateDoc(doc(db, 'orders', id), { status: 'CANCELADA', cancelledAt: new Date().toISOString() })
-      console.log(`🔍 Logging CANCELLED event...`)
       await logOrderEvent({
         orderId: id,
         type: 'CANCELLED',
@@ -173,7 +190,6 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
         profile,
         meta: { reason: 'Cancelada pelo utilizador' }
       })
-      console.log(`✅ Event logged`)
     },
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ['orders'] })
@@ -183,12 +199,10 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
 
   const reactivateMut = useMutation({
     mutationFn: async (id) => {
-      console.log(`↩️ Reactivating order ${id}`)
       await updateDoc(doc(db, 'orders', id), {
         status: ORDER_STATUS?.ESPERA || 'ESPERA',
         assignedTo: null, routeId: null, pickupId: null, needsWarehouseCompletion: false
       })
-      console.log(`🔍 Logging REACTIVATED event...`)
       await logOrderEvent({
         orderId: id,
         type: 'REACTIVATED',
@@ -196,7 +210,6 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
         profile,
         meta: { notes: 'Encomenda reativada' }
       })
-      console.log(`✅ Event logged`)
     },
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ['orders'] })
@@ -207,7 +220,14 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
   // Mutation para forçar expedição parcial (saltar faltas)
   const forcePartialMut = useMutation({
     mutationFn: async ({ id, targetStatus, notes }) => {
-      console.log(`⚡ Forçando expedição parcial: ${id} → ${targetStatus}`)
+      // Validar carrier se destino é envio direto (EXPEDIDA salta faturação e rotas)
+      if (targetStatus === 'EXPEDIDA' || targetStatus === 'A_EXPEDIR') {
+        const snap = await getDoc(doc(db, 'orders', id))
+        const orderData = snap.data()
+        if (!orderData?.carrier) {
+          throw new Error('⚠️ Transportadora obrigatória! Atribui uma transportadora na ficha da encomenda antes de avançar para expedição.')
+        }
+      }
       
       // Atualizar status e marcar como expedição parcial
       await updateDoc(doc(db, 'orders', id), {
@@ -230,8 +250,6 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
           reason: 'Encomenda forçada para avançar com produtos disponíveis'
         }
       })
-      
-      console.log(`✅ Expedição parcial autorizada`)
     },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['orders'] })
@@ -263,7 +281,12 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
     mutationFn: async ({ orderIds }) => {
       const selectedOrders = orders.filter(o => orderIds.includes(o.id))
       
-      console.log(`📦 Criando encomenda agregada em lote para ${orderIds.length} subencomendas...`)
+      // Validar que todas as encomendas têm carrier
+      const semCarrier = selectedOrders.filter(o => !o.carrier)
+      if (semCarrier.length > 0) {
+        const nomes = semCarrier.map(o => o.clientName || o.id).join(', ')
+        throw new Error(`⚠️ Transportadora obrigatória!\n\n${semCarrier.length} encomenda(s) sem transportadora: ${nomes}\n\nDefine a transportadora em cada encomenda antes de enviar para preparação.`)
+      }
       
       // 1. Agregar todos os items das subencomendas
       const aggregatedItems = {}
@@ -277,8 +300,6 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
           aggregatedItems[key].qty = (aggregatedItems[key].qty || 0) + (Number(item.qty) || 0)
         })
       })
-      
-      console.log(`🔄 Items agregados:`, Object.keys(aggregatedItems).length)
       
       // 2. Criar encomenda BULK_BATCH no Firestore
       const bulkBatchRef = await addDoc(collection(db, 'orders'), {
@@ -316,10 +337,8 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
       })
       
       const bulkBatchId = bulkBatchRef.id
-      console.log(`✅ Encomenda BULK_BATCH criada: ${bulkBatchId}`)
       
       // 3. Ligar as subencomendas ao bulk batch (marcar como "linkedToBulkBatch")
-      console.log(`🔗 Ligando subencomendas ao bulk batch...`)
       const linkBatch = writeBatch(db)
       selectedOrders.forEach(o => {
         linkBatch.update(doc(db, 'orders', o.id), {
@@ -329,10 +348,8 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
         })
       })
       await linkBatch.commit()
-      console.log(`✅ Subencomendas ligadas`)
       
       // 4. Logar eventos
-      console.log(`🔍 Logging events...`)
       for (const order of selectedOrders) {
         await logOrderEvent({
           orderId: order.id,
@@ -349,7 +366,6 @@ export default function Pipeline({ orders, clientUsernameById, profile }) {
         })
       }
       
-      console.log(`✅ Lote ${bulkBatchId} criado e enviado para preparação`)
       return bulkBatchId
     },
     onSuccess: () => {
@@ -750,7 +766,11 @@ th{background:#fafafa}.tot{display:flex;justify-content:flex-end;margin-top:10px
                   <td>{clientUsernameById[getOrderClientId(o)] || o.clientName || '—'}</td>
                   <td>{contractName[o.contractId] || '—'}</td>
                   <td>{locationName[o.locationId] || '—'}</td>
-                  <td dangerouslySetInnerHTML={{ __html: badgeHtml(o) }} />
+                  <td>
+                    <span dangerouslySetInnerHTML={{ __html: badgeHtml(o) }} />
+                    {o.armazem && <span className="warehouse-mini-badge" title={WAREHOUSE_NAMES[o.armazem] || o.armazem}>{WAREHOUSE_SHORT[o.armazem] || o.armazem}</span>}
+                    {o.armazem && o.zona && o.armazem !== o.zona && <span className="cross-warehouse-mini" title="Cross-warehouse">⚠️</span>}
+                  </td>
                   <td style={{ textAlign: 'right' }}>{orderTotalValue(o).toFixed(2)}€</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn-ghost" style={{ padding: '4px' }} onClick={() => setDetailOrder(o)} title="Ver detalhes">📋</button>
@@ -789,6 +809,14 @@ th{background:#fafafa}.tot{display:flex;justify-content:flex-end;margin-top:10px
               <button 
                 className="btn" 
                 onClick={() => {
+                  // Verificar se todas têm carrier
+                  const selectedArr = orders.filter(o => selectedBulkOrders.has(o.id))
+                  const semCarrier = selectedArr.filter(o => !o.carrier)
+                  if (semCarrier.length > 0) {
+                    const nomes = semCarrier.map(o => o.clientName || o.id).slice(0, 5).join(', ')
+                    alert(`⚠️ ${semCarrier.length} encomenda(s) sem transportadora:\n${nomes}${semCarrier.length > 5 ? '...' : ''}\n\nDefine a transportadora em cada encomenda antes de enviar para preparação.`)
+                    return
+                  }
                   const summary = calculateBulkSummary()
                   if (summary) setBulkSummaryModal(summary)
                 }}
@@ -821,6 +849,7 @@ th{background:#fafafa}.tot{display:flex;justify-content:flex-end;margin-top:10px
             onReactivate={() => { reactivateMut.mutate(detailOrder.id); setDetailOrder(null) }}
             onDelete={() => { deleteMut.mutate(detailOrder.id); setDetailOrder(null) }}
             onCarrierChange={(carrier) => carrierMut.mutate({ id: detailOrder.id, carrier })}
+            onArmazemChange={(armazem) => armazemMut.mutate({ id: detailOrder.id, armazem })}
             onForcePartial={() => { setDetailOrder(null); setForcePartialOrder(detailOrder) }}
           />
         )}
@@ -931,7 +960,7 @@ th{background:#fafafa}.tot{display:flex;justify-content:flex-end;margin-top:10px
 
 // ==================== ORDER DETAIL ====================
 
-function OrderDetail({ order, contractName, locationName, onMove, onCancel, onReactivate, onDelete, onCarrierChange, onForcePartial }) {
+function OrderDetail({ order, contractName, locationName, onMove, onCancel, onReactivate, onDelete, onCarrierChange, onArmazemChange, onForcePartial }) {
   const { can } = usePermissions()
   const items = itemsOf(order)
   const total = items.reduce((s, it) => s + (+it.qty || 0) * (+it.preco || 0), 0)
@@ -951,10 +980,21 @@ function OrderDetail({ order, contractName, locationName, onMove, onCancel, onRe
   const canReactivate = stateCanReactivate && can('orders.status')
   const canDelete = stateCanDelete && can('orders.delete')
   const canChangeCarrier = can('orders.edit')
+  const canChangeArmazem = can('orders.edit')
   const canForcePartial = stateCanForcePartial && can('orders.status')
+
+  // Cross-warehouse: o armazém de preparação é diferente do "natural"
+  const isCrossWarehouse = order.armazem && order.zona && order.armazem !== order.zona
 
   return (
     <div style={{ padding: '8px 16px 16px' }}>
+      {/* Cross-warehouse alert */}
+      {isCrossWarehouse && (
+        <div className="cross-warehouse-alert">
+          ⚠️ Cross-warehouse: zona {WAREHOUSE_SHORT[order.zona] || order.zona} preparada em {WAREHOUSE_NAMES[order.armazem] || order.armazem}
+        </div>
+      )}
+
       <div className="grid" style={{ marginBottom: '16px' }}>
         <div className="span-6">
           <strong>Cliente:</strong> {order.clientName || '—'}<br />
@@ -970,13 +1010,49 @@ function OrderDetail({ order, contractName, locationName, onMove, onCancel, onRe
             onChange={e => onCarrierChange(e.target.value)}
             disabled={!canChangeCarrier}
             title={canChangeCarrier ? undefined : 'Sem permissão para alterar transportadora'}
-            style={{ marginLeft: '8px', opacity: canChangeCarrier ? 1 : 0.5 }}
+            style={{
+              marginLeft: '8px',
+              opacity: canChangeCarrier ? 1 : 0.5,
+              ...((!order.carrier && stateCanSendToPrep) ? {
+                border: '2px solid #f59e0b',
+                background: 'rgba(245,158,11,0.1)',
+                borderRadius: '6px',
+                padding: '2px 6px',
+                fontWeight: 600
+              } : {})
+            }}
           >
-            <option value="">Por atribuir</option>
+            <option value="">⚠️ Por atribuir</option>
             <option value={CARRIERS.INTERNO}>Nossos carros</option>
             <option value={CARRIERS.SANTOSVALE}>Santos e Vale</option>
             <option value={CARRIERS.STEFF}>STEFF (frio)</option>
           </select>
+          {!order.carrier && stateCanSendToPrep && (
+            <div style={{ marginTop: '4px', fontSize: '11px', color: '#f59e0b', fontWeight: 500 }}>
+              ⚠️ Define a transportadora antes de enviar para preparação
+            </div>
+          )}
+          <br />
+          <strong>Armazém:</strong>
+          <select
+            value={order.armazem || ''}
+            onChange={e => onArmazemChange(e.target.value)}
+            disabled={!canChangeArmazem}
+            title={canChangeArmazem ? 'Armazém que prepara a encomenda' : 'Sem permissão'}
+            className={isCrossWarehouse ? 'cross-warehouse-select' : ''}
+            style={{
+              marginLeft: '8px',
+              opacity: canChangeArmazem ? 1 : 0.5,
+            }}
+          >
+            <option value="">Não atribuído</option>
+            {Object.entries(WAREHOUSE_NAMES).map(([k, v]) => (
+              <option key={k} value={k}>{v}</option>
+            ))}
+          </select>
+          {isCrossWarehouse && (
+            <span className="cross-warehouse-chip">⚠️ Cross</span>
+          )}
         </div>
       </div>
 
@@ -1024,8 +1100,18 @@ function OrderDetail({ order, contractName, locationName, onMove, onCancel, onRe
       <h4>Ações</h4>
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         {canSendToPrep && (
-          <button className="btn" onClick={() => onMove('PREP')}>
-            Enviar para Preparação →
+          <button
+            className="btn"
+            onClick={() => {
+              if (!order.carrier) {
+                alert('⚠️ Transportadora obrigatória!\n\nDefine primeiro a transportadora antes de enviar para preparação.')
+                return
+              }
+              onMove('PREP')
+            }}
+            style={!order.carrier ? { opacity: 0.6 } : undefined}
+          >
+            {!order.carrier ? '⚠️ ' : ''}Enviar para Preparação →
           </button>
         )}
         {order.status === 'FALTAS' && can('orders.status') && (

@@ -11,6 +11,7 @@ import { fmtDate } from '../../lib/utils'
 import { toISODate, addDays, startOfWeek, getClientName, getContractName, getLocationInfo, joinNice, getOrderLinesGeneric } from '../../lib/orderHelpers'
 import { useLocationsIndex, useContractsIndex } from '../../lib/useFirestoreIndexes'
 import { FLEET, CARRIERS, CARRIER_NAMES } from '../../config/routes'
+import { useWarehouse } from '../../contexts/WarehouseContext'
 import { CreateRoutePanel } from './CreateRoutePanel'
 import { DayColumn } from './DayColumn'
 import { ViewRouteModal } from './ViewRouteModal'
@@ -130,10 +131,14 @@ function RotasInner() {
   const locationsIndex = useLocations().data || {}
   const contractsIndex = useContracts().data || {}
 
-  // Encomendas expedidas
-  const exp = useOrders('A_EXPEDIR').data || []
+  // Filtro de armazém
+  const { filterByWarehouse } = useWarehouse() || {}
+
+  // Encomendas expedidas (filtradas por armazem)
+  const expRaw = useOrders('A_EXPEDIR').data || []
+  const exp = useMemo(() => filterByWarehouse ? filterByWarehouse(expRaw) : expRaw, [expRaw, filterByWarehouse])
   const internals = exp.filter(o => o.carrier === CARRIERS.INTERNO && !o.routeId)
-  const externals = exp.filter(o => (o.carrier === CARRIERS.SANTOS || o.carrier === CARRIERS.STEFF) && !o.pickupId)
+  const externals = exp.filter(o => (o.carrier === CARRIERS.SANTOSVALE || o.carrier === CARRIERS.STEFF) && !o.pickupId)
 
   // Semana
   const [baseDate, setBaseDate] = useState(() => toISODate(new Date()))
@@ -152,14 +157,21 @@ function RotasInner() {
 
   // Modais
   const [viewRoute, setViewRoute] = useState(null)
+  const [viewPickup, setViewPickup] = useState(null)
   const [viewOrder, setViewOrder] = useState(null)
 
-  /* ===== Semana (apenas dias com rotas) ===== */
+  /* ===== Semana (dias com rotas e/ou recolhas) ===== */
   const routesByDay = useMemo(() => {
     const map = Object.fromEntries(weekDays.map(d => [d, []]))
     routes.forEach(r => { if (map[r.date]) map[r.date].push(r) })
     return map
   }, [routes, weekDays])
+
+  const pickupsByDay = useMemo(() => {
+    const map = Object.fromEntries(weekDays.map(d => [d, []]))
+    pickups.forEach(p => { if (map[p.date]) map[p.date].push(p) })
+    return map
+  }, [pickups, weekDays])
 
   const visibleDays = useMemo(
     () => weekDays.filter(d => (routesByDay[d]?.length || 0) > 0),
@@ -355,40 +367,62 @@ table.lines td{ padding:3px 0; border-bottom:1px dotted #ccc; font-size:12px } .
       <div className="rotas-calendar">
         {weekDays.map((d, idx) => {
           const dayRoutes = routesByDay[d] || []
+          const dayPickups = pickupsByDay[d] || []
+          const totalItems = dayRoutes.length + dayPickups.length
           const isToday = d === toISODate(new Date())
           const dayName = weekdays[idx]
           const dayNum = new Date(d).getDate()
           
           return (
-            <div key={d} className={`rotas-day ${isToday ? 'today' : ''} ${dayRoutes.length ? 'has-routes' : ''}`}>
+            <div key={d} className={`rotas-day ${isToday ? 'today' : ''} ${totalItems ? 'has-routes' : ''}`}>
               <div className="rotas-day-header">
                 <span className="rotas-day-name">{dayName}</span>
                 <span className="rotas-day-num">{dayNum}</span>
-                {dayRoutes.length > 0 && (
-                  <span className="rotas-day-count">{dayRoutes.length}</span>
+                {totalItems > 0 && (
+                  <span className="rotas-day-count">{totalItems}</span>
                 )}
               </div>
               
               <div className="rotas-day-content">
-                {dayRoutes.length === 0 ? (
+                {totalItems === 0 ? (
                   <div className="rotas-day-empty">
                     <span>—</span>
                   </div>
                 ) : (
-                  dayRoutes.map(route => (
-                    <div 
-                      key={route.id} 
-                      className="rotas-route-card"
-                      onClick={() => setViewRoute(route)}
-                    >
-                      <div className="rotas-route-vehicle">{route.vehicle || 'Veículo'}</div>
-                      <div className="rotas-route-info">
-                        <span className="rotas-route-time">{route.startTime || '—:—'}</span>
-                        <span className="rotas-route-stops">{(route.orderIds || []).length} paragens</span>
+                  <>
+                    {dayRoutes.map(route => (
+                      <div 
+                        key={route.id} 
+                        className="rotas-route-card"
+                        onClick={() => setViewRoute(route)}
+                      >
+                        <div className="rotas-route-badge">🚚 Rota</div>
+                        <div className="rotas-route-vehicle">{route.vehicle || 'Veículo'}</div>
+                        <div className="rotas-route-info">
+                          <span className="rotas-route-time">{route.startTime || '—:—'}</span>
+                          <span className="rotas-route-stops">{(route.orderIds || []).length} paragens</span>
+                        </div>
+                        <div className="rotas-route-driver">{route.driverName || 'Sem motorista'}</div>
                       </div>
-                      <div className="rotas-route-driver">{route.driverName || 'Sem motorista'}</div>
-                    </div>
-                  ))
+                    ))}
+                    {dayPickups.map(pickup => (
+                      <div 
+                        key={pickup.id} 
+                        className="rotas-pickup-card"
+                        onClick={() => setViewPickup(pickup)}
+                      >
+                        <div className="rotas-pickup-badge">📦 Recolha</div>
+                        <div className="rotas-pickup-carrier">
+                          {CARRIER_NAMES[pickup.carrier] || pickup.carrier || 'Transportadora'}
+                        </div>
+                        <div className="rotas-route-info">
+                          <span className="rotas-pickup-time">{pickup.pickupTime || '—:—'}</span>
+                          <span className="rotas-route-stops">{(pickup.orderIds || []).length} encomendas</span>
+                        </div>
+                        <div className="rotas-pickup-location">{pickup.pickupLocation || '—'}</div>
+                      </div>
+                    ))}
+                  </>
                 )}
               </div>
             </div>
@@ -396,12 +430,87 @@ table.lines td{ padding:3px 0; border-bottom:1px dotted #ccc; font-size:12px } .
         })}
       </div>
 
-      {/* Mensagem quando não há rotas */}
-      {routes.length === 0 && !routeCreation.showCreate && !pickupCreation.showCreate && (
+      {/* Mensagem quando não há rotas nem recolhas */}
+      {routes.length === 0 && pickups.length === 0 && !routeCreation.showCreate && !pickupCreation.showCreate && (
         <div className="rotas-empty-state">
           <div className="rotas-empty-icon">🗓️</div>
-          <h3>Sem rotas esta semana</h3>
-          <p>Clique em "Nova Rota" para criar a primeira rota de entrega.</p>
+          <h3>Sem rotas nem recolhas esta semana</h3>
+          <p>Clique em "Nova Rota" ou "Nova Recolha" para começar.</p>
+        </div>
+      )}
+
+      {/* MODAL: VER RECOLHA */}
+      {viewPickup && (
+        <div className="modal-overlay" onClick={() => setViewPickup(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <div className="modal-header">
+              <h3>📦 Recolha</h3>
+              <button className="icon-btn" onClick={() => setViewPickup(null)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ padding: '16px 20px' }}>
+              {/* Info chips */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                <div className="vrm-chip vrm-chip--purple">🚛 {CARRIER_NAMES[viewPickup.carrier] || viewPickup.carrier || '—'}</div>
+                <div className="vrm-chip">📅 {fmtDate(viewPickup.date)}</div>
+                <div className="vrm-chip">⏰ {viewPickup.pickupTime || '—'}</div>
+                <div className="vrm-chip">📍 {viewPickup.pickupLocation || '—'}</div>
+                <div className="vrm-chip vrm-chip--purple-accent">{(viewPickup.orderIds || []).length} encomendas</div>
+                <span style={{
+                  padding: '4px 12px', borderRadius: 999, fontSize: '0.75rem', fontWeight: 600,
+                  background: viewPickup.status === 'PICKED_UP' ? 'rgba(16,185,129,0.15)' : viewPickup.status === 'CANCELLED' ? 'rgba(239,68,68,0.15)' : 'rgba(139,92,246,0.15)',
+                  color: viewPickup.status === 'PICKED_UP' ? '#10b981' : viewPickup.status === 'CANCELLED' ? '#ef4444' : '#a78bfa'
+                }}>{viewPickup.status === 'PICKED_UP' ? '✅ Recolhida' : viewPickup.status === 'CANCELLED' ? '❌ Cancelada' : '🕐 Agendada'}</span>
+              </div>
+
+              {/* Encomendas */}
+              <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
+                Encomendas nesta recolha
+              </h4>
+              {(viewPickup.orderIds || []).length === 0 ? (
+                <p className="muted">Nenhuma encomenda associada.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {(viewPickup.orderIds || []).map((oid, i) => {
+                    const o = exp.find(x => x.id === oid)
+                    if (!o) return <div key={oid} className="muted" style={{ fontSize: 12 }}>Encomenda {oid.slice(0, 8)}… (não encontrada)</div>
+                    const L = getLocationInfo(o, { locationsIndex, contractsIndex })
+                    const lines = getOrderLinesGeneric(o)
+                    const sub = joinNice([
+                      L.name,
+                      L.contract ? `Contrato: ${L.contract}` : '',
+                    ])
+                    return (
+                      <div
+                        key={oid}
+                        className="vrm-delivery-card vrm-delivery-card--purple"
+                        onClick={() => { setViewOrder(o) }}
+                      >
+                        <div className="vrm-delivery-index vrm-delivery-index--purple">{i + 1}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="vrm-delivery-client">{getClientName(o) || 'Cliente'}</div>
+                          {sub && <div className="vrm-delivery-location">{sub}</div>}
+                          {L.addr && <div className="vrm-delivery-addr">{L.addr}</div>}
+                          <div className="vrm-delivery-date" style={{ color: '#a78bfa' }}>{fmtDate(o.date)}</div>
+                          {lines.length > 0 && (
+                            <div className="vrm-delivery-items">
+                              {lines.slice(0, 3).map((l, idx) => (
+                                <span key={idx} className="vrm-item-chip">{l.name} ×{l.qty}</span>
+                              ))}
+                              {lines.length > 3 && <span className="vrm-item-chip vrm-item-more" style={{ color: '#a78bfa', borderColor: 'rgba(139,92,246,0.2)', background: 'rgba(139,92,246,0.08)' }}>+{lines.length - 3} mais</span>}
+                            </div>
+                          )}
+                        </div>
+                        <div className="vrm-delivery-arrow vrm-delivery-arrow--purple">›</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions" style={{ padding: '12px 20px' }}>
+              <button className="btn" onClick={() => setViewPickup(null)}>Fechar</button>
+            </div>
+          </div>
         </div>
       )}
 

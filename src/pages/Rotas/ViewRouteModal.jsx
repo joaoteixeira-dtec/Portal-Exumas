@@ -1,4 +1,4 @@
-import { getClientName, getLocationInfo, joinNice } from '../../lib/orderHelpers'
+import { getClientName, getLocationInfo, getOrderLinesGeneric, joinNice } from '../../lib/orderHelpers'
 import { fmtDate } from '../../lib/utils'
 
 export const ViewRouteModal = ({
@@ -14,56 +14,77 @@ export const ViewRouteModal = ({
   contractsIndex,
   deleteLoading
 }) => {
+  const ordersList = (route.orderIds || []).map(oid => exp.find(x => x.id === oid)).filter(Boolean)
+  const totalParagens = ordersList.length
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
         <div className="modal-header">
-          <h3>Resumo da rota</h3>
+          <h3>🚚 Resumo da rota</h3>
           <button className="icon-btn" onClick={onClose}>✕</button>
         </div>
-        <div className="modal-body">
-          <div className="grid" style={{ gap: 8, gridTemplateColumns: 'repeat(12,1fr)' }}>
-            <div className="span-3"><div className="chip">Data: {fmtDate(route.date)}</div></div>
-            <div className="span-3"><div className="chip">Veículo: {route.vehicle}</div></div>
-            <div className="span-3"><div className="chip">Motorista: {route.driverName}</div></div>
-            <div className="span-3"><div className="chip">Hora: {route.startTime || '—:—'}</div></div>
-            {route.notes && (
-              <div className="span-12">
-                <small className="muted">Obs: {route.notes}</small>
-              </div>
-            )}
+        <div className="modal-body" style={{ padding: '16px 20px' }}>
+          {/* Info chips */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+            <div className="vrm-chip">📅 {fmtDate(route.date)}</div>
+            <div className="vrm-chip">🚗 {route.vehicle}</div>
+            <div className="vrm-chip">👤 {route.driverName}</div>
+            <div className="vrm-chip">⏰ {route.startTime || '—:—'}</div>
+            <div className="vrm-chip vrm-chip-accent">{totalParagens} paragens</div>
           </div>
 
-          <div className="hr"></div>
+          {route.notes && (
+            <div style={{
+              padding: '10px 14px', borderRadius: 8, marginBottom: 16,
+              background: 'rgba(249,115,22,0.06)', border: '1px solid rgba(249,115,22,0.15)',
+              fontSize: 13, color: 'var(--ui-text-dim)'
+            }}>
+              <strong style={{ color: '#fb923c' }}>Obs:</strong> {route.notes}
+            </div>
+          )}
 
-          <h4>Ordem de entrega</h4>
-          <ol className="list-plain">
+          {/* Entregas */}
+          <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
+            Ordem de entrega
+          </h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {(route.orderIds || []).map((oid, i) => {
               const o = exp.find(x => x.id === oid)
               const L = getLocationInfo(o || {}, { locationsIndex, contractsIndex })
+              const lines = o ? getOrderLinesGeneric(o) : []
               const sub = joinNice([
                 L.name,
-                L.addr,
                 L.contract ? `Contrato: ${L.contract}` : '',
-                o ? fmtDate(o.date) : ''
               ])
               return (
-                <li
+                <div
                   key={oid}
-                  className="route-list-item clickable"
+                  className="vrm-delivery-card"
                   onClick={() => o && onViewOrder(o)}
                 >
-                  <span className="index">{i + 1}</span>
-                  <div className="info">
-                    <div className="title">{getClientName(o) || '—'}</div>
-                    <div className="sub muted">{sub || '—'}</div>
+                  <div className="vrm-delivery-index">{i + 1}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="vrm-delivery-client">{getClientName(o) || '—'}</div>
+                    {sub && <div className="vrm-delivery-location">{sub}</div>}
+                    {L.addr && <div className="vrm-delivery-addr">{L.addr}</div>}
+                    {o && <div className="vrm-delivery-date">{fmtDate(o.date)}</div>}
+                    {lines.length > 0 && (
+                      <div className="vrm-delivery-items">
+                        {lines.slice(0, 3).map((l, idx) => (
+                          <span key={idx} className="vrm-item-chip">{l.name} ×{l.qty}</span>
+                        ))}
+                        {lines.length > 3 && <span className="vrm-item-chip vrm-item-more">+{lines.length - 3} mais</span>}
+                      </div>
+                    )}
                   </div>
-                </li>
+                  <div className="vrm-delivery-arrow">›</div>
+                </div>
               )
             })}
-          </ol>
+          </div>
         </div>
-        <div className="modal-actions">
+        <div className="modal-actions" style={{ padding: '12px 20px', gap: 10 }}>
           <button className="btn-secondary btn-icon" onClick={onPrint} title="Imprimir / Guardar como PDF">
             🖨️ PDF
           </button>

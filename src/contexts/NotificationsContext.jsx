@@ -208,6 +208,42 @@ export function NotificationsProvider({ children }) {
           })
         }
       }
+
+      // 🔴 Discrepâncias de entrega - faturação, admin, gestor
+      if (order.delivery?.hasDiscrepancy && order.delivery?.discrepancyStatus !== 'resolvida' &&
+          (can('invoicing.view') || role === 'admin' || role === 'gestor')) {
+        const delItems = order.delivery?.items || []
+        const totalReturned = delItems.reduce((s, it) => s + (Number(it.returnedQty) || 0), 0)
+        notifications.push({
+          id: `discrepancy_${orderId}`,
+          type: 'danger',
+          icon: '↩',
+          title: 'Devolução / Discrepância',
+          message: `#${orderNo} - ${clientName}${totalReturned > 0 ? ` (${totalReturned} devolvido${totalReturned !== 1 ? 's' : ''})` : ''}`,
+          orderId,
+          priority: 1,
+          route: '/faturacao',
+          createdAt: order.deliveredAt || order.updatedAt || order.createdAt
+        })
+      }
+
+      // 📦 Devoluções para armazém - armazém, admin, gestor
+      if (order.delivery?.hasDiscrepancy && 
+          order.delivery?.items?.some(it => Number(it.returnedQty) > 0) &&
+          (can('warehouse.view') || role === 'admin' || role === 'gestor')) {
+        const totalReturned = (order.delivery?.items || []).reduce((s, it) => s + (Number(it.returnedQty) || 0), 0)
+        notifications.push({
+          id: `return_${orderId}`,
+          type: 'warning',
+          icon: '📦',
+          title: 'Produtos devolvidos',
+          message: `#${orderNo} - ${clientName} (${totalReturned} produto${totalReturned !== 1 ? 's' : ''})`,
+          orderId,
+          priority: 1,
+          route: '/armazem',
+          createdAt: order.deliveredAt || order.updatedAt || order.createdAt
+        })
+      }
     }
 
     // Ordenar por prioridade e limitar

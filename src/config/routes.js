@@ -1,15 +1,34 @@
 /* Constantes e configurações para rotas e recolhas */
 
+// ==================== ARMAZÉNS ====================
+
+export const WAREHOUSES = {
+  COVOES: 'covoes',
+  MARINHAIS: 'marinhais',
+}
+
+export const WAREHOUSE_NAMES = {
+  [WAREHOUSES.COVOES]: 'Covões (Norte)',
+  [WAREHOUSES.MARINHAIS]: 'Marinhais (Sul)',
+}
+
+export const WAREHOUSE_SHORT = {
+  [WAREHOUSES.COVOES]: 'Norte',
+  [WAREHOUSES.MARINHAIS]: 'Sul',
+}
+
+// ==================== FROTA ====================
+
 export const FLEET = ['Carro 1', 'Carro 2', 'Carrinha Frio 1', 'Carrinha 3']
 
 export const CARRIERS = {
   INTERNO: 'interno',
-  SANTOS: 'santosvale',
+  SANTOSVALE: 'santosvale',
   STEFF: 'steff'
 }
 
 export const CARRIER_NAMES = {
-  [CARRIERS.SANTOS]: 'Santos e Vale',
+  [CARRIERS.SANTOSVALE]: 'Santos e Vale',
   [CARRIERS.STEFF]: 'STEFF (frio)',
   [CARRIERS.INTERNO]: 'Interna'
 }

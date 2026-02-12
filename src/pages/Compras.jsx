@@ -1,22 +1,26 @@
 import { useMemo, useState } from 'react'
 import { useOrders, useUpdateOrder } from '../hooks/useOrders'
 import { usePermissions } from '../hooks/usePermissions'
+import { useWarehouse } from '../contexts/WarehouseContext'
 import { PageGuard } from '../components/PageGuard'
 import { fmtDate } from '../lib/utils'
 
 export default function Compras(){
   const { can } = usePermissions()
+  const { filterByWarehouse } = useWarehouse() || {}
   
   // Permissões
   const canManage = can('purchases.manage')
   const canRestock = can('purchases.restock')
   
-  // Encomendas em FALTAS
-  const faltas = useOrders('FALTAS').data || []
+  // Encomendas em FALTAS (filtradas por armazém)
+  const faltasRaw = useOrders('FALTAS').data || []
+  const faltas = useMemo(() => filterByWarehouse ? filterByWarehouse(faltasRaw) : faltasRaw, [faltasRaw, filterByWarehouse])
   const upd = useUpdateOrder()
 
   // Encomendas ENTREGUES (para análises de top produtos)
-  const entregues = useOrders('ENTREGUE').data || []
+  const entreguesRaw = useOrders('ENTREGUE').data || []
+  const entregues = useMemo(() => filterByWarehouse ? filterByWarehouse(entreguesRaw) : entreguesRaw, [entreguesRaw, filterByWarehouse])
 
   // Ordena FALTAS por data (primeiro a repor as mais antigas)
   const faltasSorted = useMemo(() => {

@@ -9,14 +9,15 @@
  * 4. Tabelas simplificadas com ações
  */
 
-import { useOrders, useUpdateOrder } from '../hooks/useOrders'
+import { useOrders, useUpdateOrder, useAddRectification } from '../hooks/useOrders'
 import { useShippingGuides } from '../hooks/useShippingGuides'
 import { useClients } from '../hooks/useCommon'
 import { usePermissions } from '../hooks/usePermissions'
 import { useAuth } from '../contexts/AuthProvider'
+import { useWarehouse } from '../contexts/WarehouseContext'
 import { PageGuard } from '../components/PageGuard'
 import { useMemo, useState, useEffect } from 'react'
-import { fmtDate, ORDER_STATUS } from '../lib/utils'
+import { fmtDate, ORDER_STATUS, CARRIERS } from '../lib/utils'
 import { db } from '../lib/firebase'
 import { doc, getDoc, updateDoc } from 'firebase/firestore'
 
@@ -40,8 +41,11 @@ export default function Faturacao() {
   const canExport = can('invoicing.export')
   
   // Dados
-  const toBill = useOrders('A_FATURAR').data || []
-  const all = useOrders().data || []
+  const { filterByWarehouse } = useWarehouse() || {}
+  const toBillRaw = useOrders('A_FATURAR').data || []
+  const allRaw = useOrders().data || []
+  const toBill = useMemo(() => filterByWarehouse ? filterByWarehouse(toBillRaw) : toBillRaw, [toBillRaw, filterByWarehouse])
+  const all = useMemo(() => filterByWarehouse ? filterByWarehouse(allRaw) : allRaw, [allRaw, filterByWarehouse])
   const withInv = useMemo(() => all.filter((o) => !!o.invoice), [all])
   const shippingGuidesPending = useShippingGuides('PENDENTE').data || []
   const clientsAll = useClients().data || []
@@ -51,13 +55,17 @@ export default function Faturacao() {
   )
 
   const upd = useUpdateOrder()
+  const addRect = useAddRectification()
 
   // State
-  const [tab, setTab] = useState('toBill') // 'toBill', 'invoices' ou 'guides'
+  const [tab, setTab] = useState('toBill') // 'toBill', 'invoices', 'guides' ou 'discrepancies'
   const [search, setSearch] = useState('')
   const [clientFilter, setClientFilter] = useState('')
   const [expandedRow, setExpandedRow] = useState(null)
   const [timeFilter, setTimeFilter] = useState('1S') // '1D', '1S', '1M', '1A'
+  const [rectModal, setRectModal] = useState(null) // { order, type }
+  const [rectForm, setRectForm] = useState({ number: '', amount: '', notes: '' })
+  const [deliveryDetailOrder, setDeliveryDetailOrder] = useState(null)
 
   // Mapas de nomes
   const [contractMap, setContractMap] = useState({})
@@ -106,14 +114,23 @@ export default function Faturacao() {
     return () => { cancel = true }
   }, [toBill, withInv, activeClients])
 
+  // Carrier inline edit (para encomendas sem transportadora)
+  const [carrierEdits, setCarrierEdits] = useState({})
+  const handleCarrierInlineChange = (orderId, value) => {
+    setCarrierEdits(prev => ({ ...prev, [orderId]: value }))
+    // Guardar no Firestore imediatamente
+    updateDoc(doc(db, 'orders', orderId), { carrier: value || null }).catch(console.error)
+  }
+
   // Faturar encomenda
   const handleCreateInvoice = (o) => {
-    console.log('📝 Creating invoice for order:', o.id)
-    console.log('  - Client:', o.clientName)
-    console.log('  - Current status:', o.status)
-    console.log('  - User role:', profile?.role)
-    console.log('  - Can create:', canCreate)
-    
+    // Validar carrier antes de avançar para A_EXPEDIR
+    const effectiveCarrier = carrierEdits[o.id] || o.carrier
+    if (!effectiveCarrier) {
+      alert('⚠️ Transportadora obrigatória!\n\nEsta encomenda não tem transportadora atribuída. Seleciona uma transportadora antes de faturar.\n\nSem transportadora, a encomenda não aparecerá nas Rotas nem nas Recolhas.')
+      return
+    }
+
     const items = orderItems(o)
     const total = orderTotal(o)
     const inv = {
@@ -125,12 +142,7 @@ export default function Faturacao() {
       sentAt: null,
     }
     
-    console.log('  - Invoice object:', inv)
-    console.log('  - About to call upd.mutate()')
-    
-    upd.mutate({ id: o.id, data: { invoice: inv, status: ORDER_STATUS.A_EXPEDIR, _profile: profile } })
-    
-    console.log('  - upd.mutate() called')
+    upd.mutate({ id: o.id, data: { invoice: inv, status: ORDER_STATUS.A_EXPEDIR, carrier: effectiveCarrier, _profile: profile } })
   }
 
   // Exportar fatura em XML
@@ -257,6 +269,14 @@ export default function Faturacao() {
     return data.sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date))
   }, [tab, toBill, withInv, shippingGuidesPending, search, clientFilter, timeFilter, contractMap, locationMap])
 
+  // Encomendas com discrepâncias de entrega  
+  const discrepancies = useMemo(() => 
+    all.filter(o => o.delivery?.hasDiscrepancy || o.hasDeliveryIssues)
+  , [all])
+  const pendingDiscrepancies = useMemo(() => 
+    discrepancies.filter(o => o.delivery?.discrepancyStatus !== 'resolvida')
+  , [discrepancies])
+
   // KPI
   const kpi = useMemo(() => {
     const total = orderTotal
@@ -268,8 +288,10 @@ export default function Faturacao() {
       sentCount: withInv.filter((o) => o.invoice?.sentAt).length,
       guidesCount: shippingGuidesPending.length,
       guidesValue: shippingGuidesPending.reduce((s, g) => s + orderTotal({ items: g.items }), 0),
+      discrepanciesCount: pendingDiscrepancies.length,
+      discrepanciesTotal: discrepancies.length,
     }
-  }, [toBill, withInv, shippingGuidesPending])
+  }, [toBill, withInv, shippingGuidesPending, pendingDiscrepancies, discrepancies])
 
   return (
     <PageGuard requiredPermission="invoicing.view">
@@ -468,11 +490,235 @@ export default function Faturacao() {
             >
               📄 Faturas ({kpi.invoicesCount})
             </button>
+            <button
+              onClick={() => setTab('discrepancies')}
+              style={{
+                padding: '10px 20px',
+                background: tab === 'discrepancies' 
+                  ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' 
+                  : 'transparent',
+                color: tab === 'discrepancies' ? 'white' : 'var(--ui-text-dim)',
+                border: tab === 'discrepancies' ? 'none' : '1px solid var(--ui-border)',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+                transition: 'all 0.2s ease',
+                position: 'relative'
+              }}
+            >
+              ↩ Devoluções ({kpi.discrepanciesCount})
+              {kpi.discrepanciesCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: -6, right: -6,
+                  width: 18, height: 18, borderRadius: '50%',
+                  background: '#ef4444', color: 'white',
+                  fontSize: '10px', fontWeight: 700,
+                  display: 'grid', placeItems: 'center',
+                  animation: 'pulse 2s infinite'
+                }}>{kpi.discrepanciesCount}</span>
+              )}
+            </button>
           </div>
 
           {/* Tab Content */}
           <div style={{ padding: '16px' }}>
-            {filtered.length === 0 ? (
+            {/* ====== DEVOLUÇÕES / DISCREPÂNCIAS ====== */}
+            {tab === 'discrepancies' ? (
+              <div>
+                {discrepancies.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '48px 20px' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '12px', opacity: 0.5 }}>✅</div>
+                    <p style={{ color: 'var(--ui-text-dim)', margin: 0 }}>Sem devoluções ou discrepâncias</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {discrepancies.map(o => {
+                      const del = o.delivery || {}
+                      const isResolved = del.discrepancyStatus === 'resolvida'
+                      const delItems = del.items || []
+                      const totalReturned = delItems.reduce((s, it) => s + (Number(it.returnedQty) || 0), 0)
+                      const totalDiff = delItems.reduce((s, it) => s + (Number(it.invoicedQty) - Number(it.deliveredQty)), 0)
+                      
+                      return (
+                        <div key={o.id} className="discrepancy-card" style={{
+                          border: `1px solid ${isResolved ? 'var(--ui-border)' : '#ef444440'}`,
+                          borderRadius: '10px',
+                          padding: '16px',
+                          background: isResolved ? 'transparent' : 'rgba(239,68,68,0.03)',
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                            <div>
+                              <div style={{ fontWeight: 600, color: 'var(--ui-text)', marginBottom: '4px' }}>
+                                {o.clientName || '—'}
+                                {o.invoice?.number && <span style={{ color: 'var(--ui-text-dim)', fontWeight: 400, marginLeft: 8, fontSize: '12px' }}>{o.invoice.number}</span>}
+                              </div>
+                              <div style={{ fontSize: '12px', color: 'var(--ui-text-dim)' }}>
+                                {fmtDate(o.date)} • {o.id?.slice(-12)} • Motorista: {del.recordedBy || '—'}
+                              </div>
+                              {del.notes && (
+                                <div style={{ fontSize: '12px', color: '#f59e0b', marginTop: '4px' }}>
+                                  💬 {del.notes}
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <span style={{
+                                padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 600,
+                                background: isResolved ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                                color: isResolved ? '#10b981' : '#ef4444'
+                              }}>
+                                {isResolved ? '✓ Resolvida' : '⚠ Pendente'}
+                              </span>
+                              {del.outcome && del.outcome !== 'OK' && (
+                                <span style={{
+                                  padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 600,
+                                  background: 'rgba(249,115,22,0.15)', color: '#f97316'
+                                }}>
+                                  {del.outcome === 'DEVOLVIDO' ? '↩ Devolvido' : del.outcome === 'NAOENTREGUE' ? '✕ Não entregue' : del.outcome}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Resumo rápido */}
+                          <div style={{ display: 'flex', gap: '16px', marginBottom: '12px', fontSize: '13px' }}>
+                            {totalReturned > 0 && (
+                              <span style={{ color: '#ef4444' }}>↩ {totalReturned} devolvido{totalReturned !== 1 ? 's' : ''}</span>
+                            )}
+                            {totalDiff > 0 && (
+                              <span style={{ color: '#f59e0b' }}>⚠ {totalDiff} não entregue{totalDiff !== 1 ? 's' : ''}</span>
+                            )}
+                          </div>
+
+                          {/* Tabela de comparação */}
+                          {deliveryDetailOrder === o.id && (() => {
+                            // Usar delivery.items se existir, senão mostrar itens da encomenda como fallback
+                            const displayItems = delItems.length > 0 ? delItems : orderItems(o).map(it => ({
+                              name: it.productName || it.name || 'Item',
+                              unit: it.unidade || '',
+                              invoicedQty: Number(it.preparedQty || it.qty || 0),
+                              deliveredQty: del.outcome === 'NAOENTREGUE' ? 0 : Number(it.preparedQty || it.qty || 0),
+                              returnedQty: 0,
+                              returnReason: '',
+                            }))
+                            const hasDeliveryData = delItems.length > 0
+
+                            return displayItems.length > 0 ? (
+                            <div style={{ marginBottom: '12px', background: 'var(--ui-bg)', borderRadius: '8px', border: '1px solid var(--ui-border)', overflow: 'hidden' }}>
+                              {!hasDeliveryData && (
+                                <div style={{ padding: '8px 12px', fontSize: '11px', color: '#f59e0b', background: 'rgba(245,158,11,0.06)', borderBottom: '1px solid var(--ui-border)' }}>
+                                  ⚠️ Registo anterior — sem detalhe de entrega do motorista. A mostrar itens da encomenda.
+                                </div>
+                              )}
+                              <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse' }}>
+                                <thead>
+                                  <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                                    <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--ui-text-dim)', fontWeight: 500 }}>Produto</th>
+                                    <th style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--ui-text-dim)', fontWeight: 500 }}>Faturado</th>
+                                    <th style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--ui-text-dim)', fontWeight: 500 }}>Entregue</th>
+                                    <th style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--ui-text-dim)', fontWeight: 500 }}>Devolvido</th>
+                                    <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--ui-text-dim)', fontWeight: 500 }}>Motivo</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {displayItems.map((it, i) => {
+                                    const diff = Number(it.invoicedQty) !== Number(it.deliveredQty) || Number(it.returnedQty) > 0
+                                    const reasonLabels = { danificado: 'Danificado', recusado: 'Recusado', erro_quantidade: 'Erro qtd', erro_produto: 'Produto errado', validade: 'Validade', temperatura: 'Temperatura', outro: 'Outro' }
+                                    return (
+                                      <tr key={i} style={{ borderTop: '1px solid var(--ui-border)', background: diff ? 'rgba(239,68,68,0.04)' : 'transparent' }}>
+                                        <td style={{ padding: '8px 12px', color: 'var(--ui-text)' }}>{it.name} {it.unit && <span style={{ color: 'var(--ui-text-dim)', fontSize: '11px' }}>({it.unit})</span>}</td>
+                                        <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--ui-text)' }}>{it.invoicedQty}</td>
+                                        <td style={{ textAlign: 'right', padding: '8px 12px', color: diff ? '#f59e0b' : 'var(--ui-text)', fontWeight: diff ? 600 : 400 }}>{it.deliveredQty}</td>
+                                        <td style={{ textAlign: 'right', padding: '8px 12px', color: Number(it.returnedQty) > 0 ? '#ef4444' : 'var(--ui-text-dim)', fontWeight: Number(it.returnedQty) > 0 ? 600 : 400 }}>{it.returnedQty || 0}</td>
+                                        <td style={{ padding: '8px 12px', color: 'var(--ui-text-dim)', fontSize: '11px' }}>{reasonLabels[it.returnReason] || it.returnReason || '—'}</td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                              {/* Info de entrega */}
+                              {(del.outcome || del.notes) && (
+                                <div style={{ padding: '8px 12px', fontSize: '12px', color: 'var(--ui-text-dim)', borderTop: '1px solid var(--ui-border)', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                  {del.outcome && <span>Resultado: <strong style={{ color: del.outcome === 'OK' ? '#10b981' : '#f59e0b' }}>{del.outcome}</strong></span>}
+                                  {o.deliveryOutcome && !del.outcome && <span>Resultado: <strong style={{ color: o.deliveryOutcome === 'OK' ? '#10b981' : '#f59e0b' }}>{o.deliveryOutcome}</strong></span>}
+                                  {(del.notes || o.deliveryNotes) && <span>💬 {del.notes || o.deliveryNotes}</span>}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ marginBottom: '12px', padding: '16px', background: 'var(--ui-bg)', borderRadius: '8px', border: '1px solid var(--ui-border)', textAlign: 'center' }}>
+                              <span style={{ color: 'var(--ui-text-dim)', fontSize: '13px' }}>
+                                Sem itens registados. Resultado: <strong>{o.deliveryOutcome || '—'}</strong>
+                                {o.deliveryNotes && <span> — 💬 {o.deliveryNotes}</span>}
+                              </span>
+                            </div>
+                          )
+                          })()}
+
+                          {/* Retificações existentes */}
+                          {(del.rectifications || []).length > 0 && deliveryDetailOrder === o.id && (
+                            <div style={{ marginBottom: '12px' }}>
+                              <div style={{ fontSize: '11px', color: 'var(--ui-text-dim)', textTransform: 'uppercase', marginBottom: '6px' }}>Retificações</div>
+                              {del.rectifications.map((r, ri) => (
+                                <div key={ri} style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '8px 12px', background: 'rgba(16,185,129,0.05)', borderRadius: '6px', marginBottom: '4px', fontSize: '12px' }}>
+                                  <span style={{ color: r.type === 'nota_credito' ? '#ef4444' : '#10b981', fontWeight: 600 }}>
+                                    {r.type === 'nota_credito' ? '📕 Nota de crédito' : '📗 Fatura complementar'}
+                                  </span>
+                                  <span style={{ color: 'var(--ui-text)' }}>{r.number}</span>
+                                  <span style={{ color: 'var(--ui-text-dim)' }}>{money(r.amount)}</span>
+                                  <span style={{ color: 'var(--ui-text-dim)' }}>{fmtDate(r.date)}</span>
+                                  {r.notes && <span style={{ color: 'var(--ui-text-dim)' }}>— {r.notes}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Ações */}
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <button
+                              onClick={() => setDeliveryDetailOrder(deliveryDetailOrder === o.id ? null : o.id)}
+                              style={{
+                                padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+                                border: '1px solid var(--ui-border)', background: 'transparent',
+                                color: 'var(--ui-text-dim)', cursor: 'pointer', fontWeight: 500
+                              }}
+                            >
+                              {deliveryDetailOrder === o.id ? '▲ Fechar' : '▼ Ver detalhes'}
+                            </button>
+                            {!isResolved && canEdit && (
+                              <>
+                                <button
+                                  onClick={() => { setRectModal({ order: o, type: 'nota_credito' }); setRectForm({ number: '', amount: '', notes: '' }) }}
+                                  style={{
+                                    padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+                                    border: 'none', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                    color: 'white', cursor: 'pointer', fontWeight: 600
+                                  }}
+                                >
+                                  📕 Nota de crédito
+                                </button>
+                                <button
+                                  onClick={() => { setRectModal({ order: o, type: 'fatura_complementar' }); setRectForm({ number: '', amount: '', notes: '' }) }}
+                                  style={{
+                                    padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+                                    border: 'none', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                    color: 'white', cursor: 'pointer', fontWeight: 600
+                                  }}
+                                >
+                                  📗 Fatura complementar
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+            filtered.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '48px 20px' }}>
                 <div style={{ fontSize: '48px', marginBottom: '12px', opacity: 0.5 }}>
                   {tab === 'toBill' ? '✅' : tab === 'guides' ? '📭' : '📭'}
@@ -532,35 +778,55 @@ export default function Faturacao() {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         {tab === 'toBill' ? (
-                          <button
-                            className="btn"
-                            onClick={(e) => {
-                              console.log('🖱️ Button clicked!')
-                              console.log('  - canCreate:', canCreate)
-                              console.log('  - upd.isPending:', upd.isPending)
-                              console.log('  - Button disabled:', !canCreate || upd.isPending)
-                              if (!canCreate) {
-                                alert('Sem permissão para criar faturas')
-                                return
-                              }
-                              if (upd.isPending) {
-                                alert('Aguarde, operação em progresso...')
-                                return
-                              }
-                              e.stopPropagation()
-                              handleCreateInvoice(o)
-                            }}
-                            disabled={!canCreate || upd.isPending}
-                            style={{ 
-                              padding: '8px 16px', 
-                              fontSize: '12px',
-                              background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
-                              border: 'none',
-                              fontWeight: 600
-                            }}
-                          >
-                            Faturar
-                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {/* Alerta se não tem carrier */}
+                            {!(carrierEdits[o.id] || o.carrier) && (
+                              <select
+                                value={carrierEdits[o.id] || o.carrier || ''}
+                                onChange={e => { e.stopPropagation(); handleCarrierInlineChange(o.id, e.target.value) }}
+                                onClick={e => e.stopPropagation()}
+                                style={{
+                                  padding: '6px 8px',
+                                  fontSize: '11px',
+                                  borderRadius: '6px',
+                                  border: '2px solid #f59e0b',
+                                  background: 'rgba(245,158,11,0.1)',
+                                  color: 'var(--ui-text)',
+                                  fontWeight: 500
+                                }}
+                              >
+                                <option value="">⚠️ Transporte?</option>
+                                <option value={CARRIERS.INTERNO}>Nossos carros</option>
+                                <option value={CARRIERS.SANTOSVALE}>Santos e Vale</option>
+                                <option value={CARRIERS.STEFF}>STEFF (frio)</option>
+                              </select>
+                            )}
+                            <button
+                              className="btn"
+                              onClick={(e) => {
+                                if (!canCreate) {
+                                  alert('Sem permissão para criar faturas')
+                                  return
+                                }
+                                if (upd.isPending) {
+                                  alert('Aguarde, operação em progresso...')
+                                  return
+                                }
+                                e.stopPropagation()
+                                handleCreateInvoice(o)
+                              }}
+                              disabled={!canCreate || upd.isPending}
+                              style={{ 
+                                padding: '8px 16px', 
+                                fontSize: '12px',
+                                background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+                                border: 'none',
+                                fontWeight: 600
+                              }}
+                            >
+                              Faturar
+                            </button>
+                          </div>
                         ) : tab === 'invoices' ? (
                           <span style={{ 
                             padding: '4px 10px',
@@ -688,9 +954,94 @@ export default function Faturacao() {
                   )
                 })}
               </div>
+            )
             )}
           </div>
         </div>
+
+        {/* ====== MODAL DE RETIFICAÇÃO ====== */}
+        {rectModal && (
+          <div className="modal-overlay" onClick={() => setRectModal(null)}>
+            <div className="driver-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+              <div className="driver-modal-header">
+                <h3>
+                  {rectModal.type === 'nota_credito' ? '📕 Registar Nota de Crédito' : '📗 Registar Fatura Complementar'}
+                </h3>
+                <button className="driver-modal-close" onClick={() => setRectModal(null)}>✕</button>
+              </div>
+              <div className="driver-modal-body">
+                <div style={{ marginBottom: '12px', fontSize: '13px', color: 'var(--ui-text-dim)' }}>
+                  Encomenda de <strong style={{ color: 'var(--ui-text)' }}>{rectModal.order?.clientName || '—'}</strong>
+                  {rectModal.order?.invoice?.number && ` • ${rectModal.order.invoice.number}`}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <label style={{ fontSize: '13px' }}>
+                    <span style={{ color: 'var(--ui-text-dim)', display: 'block', marginBottom: '4px' }}>
+                      Número do documento
+                    </span>
+                    <input
+                      type="text"
+                      value={rectForm.number}
+                      onChange={e => setRectForm(p => ({ ...p, number: e.target.value }))}
+                      placeholder={rectModal.type === 'nota_credito' ? 'NC-2026-001' : 'FC-2026-001'}
+                      style={{ width: '100%' }}
+                    />
+                  </label>
+                  <label style={{ fontSize: '13px' }}>
+                    <span style={{ color: 'var(--ui-text-dim)', display: 'block', marginBottom: '4px' }}>
+                      Valor (€)
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={rectForm.amount}
+                      onChange={e => setRectForm(p => ({ ...p, amount: e.target.value }))}
+                      placeholder="0.00"
+                      style={{ width: '100%' }}
+                    />
+                  </label>
+                  <label style={{ fontSize: '13px' }}>
+                    <span style={{ color: 'var(--ui-text-dim)', display: 'block', marginBottom: '4px' }}>
+                      Notas (opcional)
+                    </span>
+                    <textarea
+                      rows={2}
+                      value={rectForm.notes}
+                      onChange={e => setRectForm(p => ({ ...p, notes: e.target.value }))}
+                      placeholder="Detalhes adicionais..."
+                      style={{ width: '100%' }}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="driver-modal-footer">
+                <button className="driver-btn driver-btn-ghost" onClick={() => setRectModal(null)}>Cancelar</button>
+                <button
+                  className="driver-btn driver-btn-primary"
+                  disabled={!rectForm.number || !rectForm.amount || addRect.isPending}
+                  onClick={() => {
+                    addRect.mutate({
+                      orderId: rectModal.order.id,
+                      rectification: {
+                        type: rectModal.type,
+                        number: rectForm.number,
+                        amount: Number(rectForm.amount) || 0,
+                        notes: rectForm.notes,
+                        date: new Date().toISOString().slice(0, 10),
+                        createdBy: profile?.name || 'Faturação',
+                        createdAt: new Date().toISOString(),
+                      }
+                    })
+                    setRectModal(null)
+                  }}
+                >
+                  {addRect.isPending ? 'A guardar...' : 'Registar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </PageGuard>
   )

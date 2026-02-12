@@ -8,6 +8,7 @@ import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrders } from '../hooks/useOrders'
 import { useAuth } from '../contexts/AuthProvider'
+import { useWarehouse } from '../contexts/WarehouseContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { 
   isCancelledStatus, isDeliveredStatus, isBulkSubOrder, isBulkBatchOrder, orderTotalValue 
@@ -452,8 +453,10 @@ export default function Dashboard() {
   const { profile } = useAuth()
   const { can } = usePermissions()
   const navigate = useNavigate()
+  const { filterByWarehouse } = useWarehouse() || {}
   const ordersQ = useOrders()
-  const orders = useMemo(() => ordersQ.data || [], [ordersQ.data])
+  const ordersRaw = useMemo(() => ordersQ.data || [], [ordersQ.data])
+  const orders = useMemo(() => filterByWarehouse ? filterByWarehouse(ordersRaw) : ordersRaw, [ordersRaw, filterByWarehouse])
   const [greeting, setGreeting] = useState('Bom dia')
 
   // Set greeting based on time

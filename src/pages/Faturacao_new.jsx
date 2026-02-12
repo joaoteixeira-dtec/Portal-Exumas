@@ -14,7 +14,7 @@ import { useClients } from '../hooks/useCommon'
 import { usePermissions } from '../hooks/usePermissions'
 import { PageGuard } from '../components/PageGuard'
 import { useMemo, useState, useEffect } from 'react'
-import { fmtDate, ORDER_STATUS } from '../lib/utils'
+import { fmtDate, ORDER_STATUS, CARRIERS } from '../lib/utils'
 import { db } from '../lib/firebase'
 import { doc, getDoc } from 'firebase/firestore'
 
@@ -101,8 +101,25 @@ export default function Faturacao() {
     return () => { cancel = true }
   }, [toBill, withInv, activeClients])
 
+  // Carrier inline edit (para encomendas sem transportadora)
+  const [carrierEdits, setCarrierEdits] = useState({})
+  const handleCarrierInlineChange = (orderId, value) => {
+    setCarrierEdits(prev => ({ ...prev, [orderId]: value }))
+    import('../lib/firebase').then(({ db: fireDb }) => {
+      import('firebase/firestore').then(({ doc: fbDoc, updateDoc: fbUpdate }) => {
+        fbUpdate(fbDoc(fireDb, 'orders', orderId), { carrier: value || null }).catch(console.error)
+      })
+    })
+  }
+
   // Faturar encomenda
   const handleCreateInvoice = (o) => {
+    const effectiveCarrier = carrierEdits[o.id] || o.carrier
+    if (!effectiveCarrier) {
+      alert('⚠️ Transportadora obrigatória!\n\nEsta encomenda não tem transportadora atribuída. Seleciona uma transportadora antes de faturar.\n\nSem transportadora, a encomenda não aparecerá nas Rotas nem nas Recolhas.')
+      return
+    }
+
     const items = orderItems(o)
     const total = orderTotal(o)
     const inv = {
@@ -113,7 +130,7 @@ export default function Faturacao() {
       reviewStatus: 'pendente',
       sentAt: null,
     }
-    upd.mutate({ id: o.id, data: { invoice: inv, status: ORDER_STATUS.A_EXPEDIR } })
+    upd.mutate({ id: o.id, data: { invoice: inv, status: ORDER_STATUS.A_EXPEDIR, carrier: effectiveCarrier } })
   }
 
   // Filtrar dados
@@ -267,17 +284,40 @@ export default function Faturacao() {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         {tab === 'toBill' ? (
-                          <button
-                            className="btn"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleCreateInvoice(o)
-                            }}
-                            disabled={!canCreate || upd.isPending}
-                            style={{ padding: '6px 12px', fontSize: '12px' }}
-                          >
-                            Faturar
-                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {!(carrierEdits[o.id] || o.carrier) && (
+                              <select
+                                value={carrierEdits[o.id] || o.carrier || ''}
+                                onChange={e => { e.stopPropagation(); handleCarrierInlineChange(o.id, e.target.value) }}
+                                onClick={e => e.stopPropagation()}
+                                style={{
+                                  padding: '4px 6px',
+                                  fontSize: '11px',
+                                  borderRadius: '6px',
+                                  border: '2px solid #f59e0b',
+                                  background: 'rgba(245,158,11,0.1)',
+                                  color: 'var(--ui-text)',
+                                  fontWeight: 500
+                                }}
+                              >
+                                <option value="">⚠️ Transporte?</option>
+                                <option value="interno">Nossos carros</option>
+                                <option value="santosvale">Santos e Vale</option>
+                                <option value="steff">STEFF (frio)</option>
+                              </select>
+                            )}
+                            <button
+                              className="btn"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleCreateInvoice(o)
+                              }}
+                              disabled={!canCreate || upd.isPending}
+                              style={{ padding: '6px 12px', fontSize: '12px' }}
+                            >
+                              Faturar
+                            </button>
+                          </div>
                         ) : (
                           <span className="badge" style={{ fontSize: '11px' }}>
                             {o.invoice?.number || '—'}

@@ -25,8 +25,8 @@ export function AuthProvider({ children }){
       if(u){ 
         // Use real-time listener instead of one-time fetch
         // This way, when admin changes permissions, user's profile updates automatically
-        unsubProfile = onSnapshot(doc(db,'users', u.uid), (doc) => {
-          setProfile(doc.exists() ? doc.data() : null)
+        unsubProfile = onSnapshot(doc(db,'users', u.uid), (snap) => {
+          setProfile(snap.exists() ? { id: snap.id, ...snap.data() } : null)
         })
         setLoading(false)
       } else { 

@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useOrders } from '../hooks/useOrders'
 import { useClients } from '../hooks/useCommon'
 import { useAuth } from '../contexts/AuthProvider'
+import { useWarehouse } from '../contexts/WarehouseContext'
 import Pipeline from './Gestor/components/Pipeline'
 import { isCancelledStatus, isDeliveredStatus, isBulkSubOrder, isBulkBatchOrder } from '../lib/orderHelpers'
 
@@ -17,8 +18,11 @@ export default function PipelinePage() {
   const { profile } = useAuth()
   const [isRefreshing, setIsRefreshing] = useState(false)
   
+  const { filterByWarehouse } = useWarehouse() || {}
+  
   const ordersQ = useOrders()
-  const all = useMemo(() => ordersQ.data || [], [ordersQ.data])
+  const allRaw = useMemo(() => ordersQ.data || [], [ordersQ.data])
+  const all = useMemo(() => filterByWarehouse ? filterByWarehouse(allRaw) : allRaw, [allRaw, filterByWarehouse])
   const clientsAll = useClients().data || []
 
   const clientUsernameById = useMemo(() => {

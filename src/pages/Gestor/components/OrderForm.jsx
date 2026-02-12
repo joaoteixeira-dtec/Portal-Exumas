@@ -13,6 +13,7 @@ import {
 import { db } from '../../../lib/firebase'
 import { ORDER_STATUS, CARRIERS } from '../../../lib/utils'
 import { logOrderEvent } from '../../../lib/orderEvents'
+import { useWarehouse } from '../../../contexts/WarehouseContext'
 
 // ==================== HELPERS ====================
 
@@ -42,6 +43,8 @@ const norm = (s) => (s || '').toString().toLowerCase().trim()
 
 export default function OrderForm({ clients = [], profile, onCreated }) {
   const qc = useQueryClient()
+  const wh = useWarehouse()
+  const activeWarehouse = wh?.activeWarehouse || profile?.defaultWarehouse || null
 
   // Mode: normal ou bulk
   const [orderMode, setOrderMode] = useState('normal')
@@ -378,6 +381,7 @@ export default function OrderForm({ clients = [], profile, onCreated }) {
             internalSeq: next,
             status,
             carrier: carrier || null,
+            armazem: activeWarehouse || null,
             items: basket,
             needsWarehouseCompletion: false,
             notes: notes || '',
@@ -413,6 +417,7 @@ export default function OrderForm({ clients = [], profile, onCreated }) {
           internalFallback: true,
           status,
           carrier: carrier || null,
+          armazem: activeWarehouse || null,
           items: basket,
           needsWarehouseCompletion: false,
           notes: notes || '',
@@ -427,11 +432,6 @@ export default function OrderForm({ clients = [], profile, onCreated }) {
 
       // Log event (non-blocking)
       try {
-        console.log('📝 Logging order creation event...', {
-          orderId: orderRef.id,
-          profileName: profile?.name,
-          profileRole: profile?.role,
-        })
         await logOrderEvent({
           orderId: orderRef.id,
           type: 'CREATED',
@@ -447,7 +447,6 @@ export default function OrderForm({ clients = [], profile, onCreated }) {
             internalNoStr: internal?.internalNoStr,
           },
         })
-        console.log('✅ Order creation event logged successfully')
       } catch (e) {
         console.warn('⚠️ Falhou logOrderEvent:', e?.message || e)
       }
@@ -493,6 +492,7 @@ export default function OrderForm({ clients = [], profile, onCreated }) {
         contractName: ctr?.nome || '',
         date,
         carrier: carrier || null,
+        armazem: activeWarehouse || null,
         notes: notes || '',
         rawText: bulkText || '',
         delimiter: preview.delim || '',
@@ -541,6 +541,7 @@ export default function OrderForm({ clients = [], profile, onCreated }) {
         contractName: ctr?.nome || '',
         date: baseDate,
         carrier: carrier || null,
+        armazem: activeWarehouse || null,
         notes: notes || '',
         status: ORDER_STATUS.ESPERA,
         createdAt: now,

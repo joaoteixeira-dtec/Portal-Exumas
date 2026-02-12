@@ -4,6 +4,7 @@ import { collection, getDocs, query, where, orderBy, updateDoc, doc } from 'fire
 import { db } from '../lib/firebase'
 import { useAuth } from '../contexts/AuthProvider'
 import { usePermissions } from '../hooks/usePermissions'
+import { useRecordDelivery } from '../hooks/useOrders'
 import { PageGuard } from '../components/PageGuard'
 import { fmtDate, ORDER_STATUS } from '../lib/utils'
 // Helpers partilhados (eliminação de código duplicado)
@@ -282,11 +283,59 @@ const registerOutcome = useMutation({
 })
 
 
+  const recordDelivery = useRecordDelivery()
+
   const [viewRoute, setViewRoute] = useState(null)
   const [viewOutcomeFor, setViewOutcomeFor] = useState(null)
+  const [deliveryItems, setDeliveryItems] = useState([])
   const [expandNextItems, setExpandNextItems] = useState(false)
   const [mapsUrl, setMapsUrl] = useState(null)
   const [mapsError, setMapsError] = useState(null)
+
+  // Inicializar itens de entrega quando abre modal
+  const openDeliveryModal = (route, order, type) => {
+    // Resolver itens: suportar tanto Array como Object (Firestore map)
+    let rawItems = []
+    if (Array.isArray(order?.items)) {
+      rawItems = order.items
+    } else if (order?.items && typeof order.items === 'object') {
+      rawItems = Object.values(order.items)
+    } else if (Array.isArray(order?.lines)) {
+      rawItems = order.lines
+    } else if (Array.isArray(order?.products)) {
+      rawItems = order.products
+    }
+    
+    const deliveryLines = rawItems.map((srcItem) => {
+      const name = srcItem.productName || srcItem.name || srcItem.title || srcItem.descricao || 'Item'
+      const unit = srcItem.unidade || srcItem.unit || srcItem.uom || ''
+      const invoicedQty = Number(srcItem.preparedQty || srcItem.qty || srcItem.quantity || 0)
+      return {
+        name,
+        unit,
+        invoicedQty,
+        deliveredQty: type === 'OK' ? invoicedQty : type === 'NAOENTREGUE' ? 0 : invoicedQty,
+        returnedQty: 0,
+        returnReason: '',
+        preco: Number(srcItem.preco || 0),
+      }
+    })
+    setDeliveryItems(deliveryLines)
+    setViewOutcomeFor({ route, order, type })
+  }
+
+  const updateDeliveryItem = (idx, field, value) => {
+    setDeliveryItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it
+      const updated = { ...it, [field]: value }
+      // Auto-calcular devolvido se entregue < faturado
+      if (field === 'deliveredQty') {
+        const diff = it.invoicedQty - Number(value)
+        updated.returnedQty = diff > 0 ? diff : 0
+      }
+      return updated
+    }))
+  }
 
   // Generate Google Maps route URL
   const WAREHOUSE_ADDRESS = '3840-322 Rua das Flores, Ponte de Vagos, Vagos, Aveiro, Portugal'
@@ -439,17 +488,17 @@ const registerOutcome = useMutation({
 
                 {/* Action Buttons */}
                 <div className="driver-actions">
-                  <button className="driver-btn driver-btn-success" onClick={() => setViewOutcomeFor({ route: ongoing, order: nextOrder, type: 'OK' })}>
+                  <button className="driver-btn driver-btn-success" onClick={() => openDeliveryModal(ongoing, nextOrder, 'OK')}>
                     <span className="driver-btn-icon">✓</span>
                     <span>Entregue</span>
                   </button>
-                  <button className="driver-btn driver-btn-warning" onClick={() => setViewOutcomeFor({ route: ongoing, order: nextOrder, type: 'DEVOLVIDO' })}>
+                  <button className="driver-btn driver-btn-warning" onClick={() => openDeliveryModal(ongoing, nextOrder, 'DEVOLVIDO')}>
                     <span className="driver-btn-icon">↩</span>
                     <span>Devolvido</span>
                   </button>
-                  <button className="driver-btn driver-btn-danger" onClick={() => setViewOutcomeFor({ route: ongoing, order: nextOrder, type: 'DANIFICADO' })}>
+                  <button className="driver-btn driver-btn-danger" onClick={() => openDeliveryModal(ongoing, nextOrder, 'NAOENTREGUE')}>
                     <span className="driver-btn-icon">⚠</span>
-                    <span>Problema</span>
+                    <span>Não entregue</span>
                   </button>
                 </div>
               </div>
@@ -678,13 +727,15 @@ const registerOutcome = useMutation({
         </div>
       )}
 
+      {/* ====== MODAL DE REGISTO DE ENTREGA ====== */}
       {viewOutcomeFor && (
-        <div className="modal-overlay" onClick={()=> setViewOutcomeFor(null)}>
-          <div className="driver-modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setViewOutcomeFor(null)}>
+          <div className="driver-modal delivery-modal" onClick={e => e.stopPropagation()}>
             <div className="driver-modal-header">
               <h3>
-                {viewOutcomeFor.type === 'OK' ? '✓ Confirmar Entrega' : 
-                 viewOutcomeFor.type === 'DEVOLVIDO' ? '↩ Devolução' : '⚠ Reportar Problema'}
+                {viewOutcomeFor.type === 'OK' ? '✓ Confirmar Entrega' :
+                 viewOutcomeFor.type === 'DEVOLVIDO' ? '↩ Devolução' :
+                 viewOutcomeFor.type === 'NAOENTREGUE' ? '✕ Não Entregue' : '⚠ Problema'}
               </h3>
               <button className="driver-modal-close" onClick={() => setViewOutcomeFor(null)}>✕</button>
             </div>
@@ -698,31 +749,122 @@ const registerOutcome = useMutation({
                   })()}
                 </span>
               </div>
-              
+
+              {/* Tabela de itens para validação */}
+              {deliveryItems.length > 0 && (
+                <div className="delivery-items-section">
+                  <div className="delivery-items-title">📦 Validar quantidades</div>
+                  <div className="delivery-items-table">
+                    {deliveryItems.map((it, idx) => {
+                      const hasIssue = Number(it.deliveredQty) !== Number(it.invoicedQty) || Number(it.returnedQty) > 0
+                      return (
+                        <div key={idx} className={`delivery-item-row ${hasIssue ? 'has-issue' : ''}`}>
+                          <div className="delivery-item-name">
+                            <span>{it.name}</span>
+                            {it.unit && <span className="delivery-item-unit">{it.unit}</span>}
+                          </div>
+                          <div className="delivery-item-fields">
+                            <div className="delivery-field">
+                              <label>Faturado</label>
+                              <span className="delivery-field-value">{it.invoicedQty}</span>
+                            </div>
+                            <div className="delivery-field">
+                              <label>Entregue</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max={it.invoicedQty}
+                                value={it.deliveredQty}
+                                onChange={e => updateDeliveryItem(idx, 'deliveredQty', Number(e.target.value) || 0)}
+                                className="delivery-qty-input"
+                              />
+                            </div>
+                            <div className="delivery-field">
+                              <label>Devolvido</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={it.returnedQty}
+                                onChange={e => updateDeliveryItem(idx, 'returnedQty', Number(e.target.value) || 0)}
+                                className={`delivery-qty-input ${Number(it.returnedQty) > 0 ? 'has-return' : ''}`}
+                              />
+                            </div>
+                          </div>
+                          {Number(it.returnedQty) > 0 && (
+                            <div className="delivery-return-reason">
+                              <select
+                                value={it.returnReason}
+                                onChange={e => updateDeliveryItem(idx, 'returnReason', e.target.value)}
+                                className="delivery-reason-select"
+                              >
+                                <option value="">Motivo da devolução...</option>
+                                <option value="danificado">Danificado</option>
+                                <option value="recusado">Recusado pelo cliente</option>
+                                <option value="erro_quantidade">Erro de quantidade</option>
+                                <option value="erro_produto">Produto errado</option>
+                                <option value="validade">Fora de validade</option>
+                                <option value="temperatura">Quebra de temperatura</option>
+                                <option value="outro">Outro</option>
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {/* Resumo de discrepâncias */}
+                  {deliveryItems.some(it => Number(it.deliveredQty) !== Number(it.invoicedQty) || Number(it.returnedQty) > 0) && (
+                    <div className="delivery-discrepancy-alert">
+                      ⚠️ Existem diferenças — a faturação será notificada
+                    </div>
+                  )}
+                </div>
+              )}
+
               <label className="driver-outcome-field">
                 <span>Observações (opcional)</span>
-                <textarea 
-                  id="driver-notes" 
-                  rows={3} 
+                <textarea
+                  id="driver-notes"
+                  rows={3}
                   placeholder="Ex.: Cliente ausente, deixado na portaria..."
                 />
               </label>
             </div>
             <div className="driver-modal-footer">
               <button className="driver-btn driver-btn-ghost" onClick={() => setViewOutcomeFor(null)}>Cancelar</button>
-              <button 
+              <button
                 className={`driver-btn ${viewOutcomeFor.type === 'OK' ? 'driver-btn-success' : 'driver-btn-warning'}`}
+                disabled={recordDelivery.isPending}
                 onClick={() => {
                   const notes = document.getElementById('driver-notes')?.value || ''
-                  registerOutcome.mutate({ 
-                    route: viewOutcomeFor.route, 
-                    order: viewOutcomeFor.order, 
-                    outcome: { type: viewOutcomeFor.type || 'OK', notes } 
+                  const now = new Date().toISOString()
+                  const route = viewOutcomeFor.route
+                  const next = (route.progressIndex ?? 0) + 1
+                  const done = next >= (route.orderIds?.length || 0)
+
+                  recordDelivery.mutate({
+                    orderId: viewOutcomeFor.order.id,
+                    delivery: {
+                      recordedAt: now,
+                      recordedBy: profile?.name || 'Motorista',
+                      recordedById: profile?.id,
+                      outcome: viewOutcomeFor.type,
+                      notes,
+                      items: deliveryItems,
+                    },
+                    routeUpdate: {
+                      routeId: route.id,
+                      data: {
+                        progressIndex: next,
+                        status: done ? 'DONE' : 'ONGOING',
+                        finishedAt: done ? now : null,
+                      },
+                    },
                   })
                   setViewOutcomeFor(null)
                 }}
               >
-                Confirmar
+                {recordDelivery.isPending ? 'A gravar...' : 'Confirmar'}
               </button>
             </div>
           </div>

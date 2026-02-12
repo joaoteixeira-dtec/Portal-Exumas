@@ -9,7 +9,6 @@ export function useOrderEvents(orderId) {
     enabled: !!orderId,
     queryFn: async () => {
       try {
-        console.log(`📊 useOrderEvents: Fetching events for order ${orderId}...`)
         const col = collection(db, 'orderEvents')
         // NOTE: No orderBy to avoid needing composite index
         // We'll sort on the client side instead
@@ -21,7 +20,6 @@ export function useOrderEvents(orderId) {
         const events = snap.docs.map(d => ({ id: d.id, ...d.data() }))
         // Sort by timestamp on client
         events.sort((a, b) => (a.at || '').localeCompare(b.at || ''))
-        console.log(`✅ useOrderEvents: Found ${events.length} events for order ${orderId}`)
         return events
       } catch (err) {
         console.error(`❌ useOrderEvents error:`, err.code, err.message)

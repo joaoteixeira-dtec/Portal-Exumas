@@ -306,7 +306,7 @@ export const usePickupCreation = (externals) => {
   
   const [showCreate, setShowCreate] = useState(false)
   const [date, setDate] = useState(() => toISODate(new Date()))
-  const [carrier, setCarrier] = useState(CARRIERS.SANTOS)
+  const [carrier, setCarrier] = useState(CARRIERS.SANTOSVALE)
   const [time, setTime] = useState('15:00')
   const [location, setLocation] = useState('')
   const [selected, setSelected] = useState([])
@@ -342,7 +342,7 @@ export const usePickupCreation = (externals) => {
           pickupId: ref.id,
           pickupTime: time,
           pickupLocation: location,
-          assignedTo: carrier === CARRIERS.SANTOS ? 'Santos e Vale' : 'STEFF'
+          assignedTo: carrier === CARRIERS.SANTOSVALE ? 'Santos e Vale' : 'STEFF'
         })
       }
       return ref.id

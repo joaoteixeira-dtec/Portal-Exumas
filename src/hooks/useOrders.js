@@ -38,12 +38,16 @@ export function useUpdateOrder(){
         const oldSnap = await getDoc(orderRef)
         const oldData = oldSnap.data() || {}
         
-        console.log(`📊 useUpdateOrder: Updating order ${id}`)
-        console.log(`  Old status: ${oldData.status}, New status: ${cleanData.status}`)
+        // Validar carrier obrigatório antes de A_EXPEDIR
+        if (cleanData.status === 'A_EXPEDIR' && oldData.status !== 'A_EXPEDIR') {
+          const effectiveCarrier = cleanData.carrier || oldData.carrier
+          if (!effectiveCarrier) {
+            throw new Error('⚠️ Transportadora obrigatória! Sem transportadora atribuída, a encomenda não aparecerá nas Rotas nem nas Recolhas.')
+          }
+        }
         
         // Update order
         await updateDoc(orderRef, cleanData)
-        console.log(`✅ Order updated successfully`)
         
         // Log events for specific changes
         // Detect status change
@@ -53,7 +57,6 @@ export function useUpdateOrder(){
                       cleanData.status === 'A_EXPEDIR' ? 'INVOICED' :
                       'SEND_TO_PREP'
           
-          console.log(`🔍 Logging event: ${type}`)
           await logOrderEvent({
             orderId: id,
             type,
@@ -64,17 +67,14 @@ export function useUpdateOrder(){
               toStatus: cleanData.status,
             }
           }).catch(e => console.error('Event logging failed:', e))
-          console.log(`✅ Event logged successfully`)
 
           // Se BULK_BATCH fecha (PREP → A_FATURAR), distribuir items de volta às subencomendas
           if (oldData.bulkBatch && oldData.status === 'PREP' && cleanData.status === 'A_FATURAR') {
-            console.log(`📦 Distribuindo items do BULK_BATCH de volta às subencomendas...`)
             await distributeBulkBatchItems(id, oldSnap.data(), profile)
           }
 
           // Se uma subencomenda bulk transita para A_FATURAR, criar guia de remessa
           if (oldData.linkedToBulkBatchId && oldData.status === 'PREP' && cleanData.status === 'A_FATURAR') {
-            console.log(`📋 Creating shipping guide for bulk order ${oldData.linkedToBulkBatchId}`)
             await createShippingGuideForBulkSuborder(oldSnap.data(), id, profile)
           }
         }
@@ -84,13 +84,95 @@ export function useUpdateOrder(){
       }
     },
     onSuccess:()=> {
-      console.log('✅ useUpdateOrder onSuccess: Invalidating queries')
       qc.invalidateQueries({queryKey:['orders']})
       qc.invalidateQueries({queryKey:['orderEvents']})
     },
     onError: (err) => {
       console.error('❌ useUpdateOrder error:', err.code, err.message)
     }
+  })
+}
+
+/**
+ * Hook para registar entrega com detalhe de itens (motorista)
+ * Grava delivery object na encomenda com quantidades entregues/devolvidas
+ */
+export function useRecordDelivery() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ orderId, delivery, routeUpdate }) => {
+      const orderRef = doc(db, 'orders', orderId)
+
+      // Detectar discrepâncias
+      const hasDiscrepancy = (delivery.items || []).some(it =>
+        Number(it.deliveredQty) !== Number(it.invoicedQty) || Number(it.returnedQty) > 0
+      )
+
+      // Sanitizar: remover campos undefined (Firestore rejeita undefined)
+      const sanitize = (obj) => {
+        const clean = {}
+        for (const [k, v] of Object.entries(obj)) {
+          if (v !== undefined) clean[k] = v
+        }
+        return clean
+      }
+
+      const deliveryData = sanitize({
+        ...delivery,
+        recordedById: delivery.recordedById || null,
+        hasDiscrepancy,
+        discrepancyStatus: hasDiscrepancy ? 'pendente' : null,
+        rectifications: [],
+      })
+
+      await updateDoc(orderRef, {
+        delivery: deliveryData,
+        hasDeliveryIssues: hasDiscrepancy || delivery.outcome !== 'OK',
+        deliveredAt: delivery.recordedAt,
+        deliveryOutcome: delivery.outcome,
+        deliveryNotes: delivery.notes || '',
+        status: delivery.outcome === 'NAOENTREGUE' ? 'NAOENTREGUE' : 'ENTREGUE',
+      })
+
+      // Atualizar progresso da rota
+      if (routeUpdate) {
+        await updateDoc(doc(db, 'routes', routeUpdate.routeId), routeUpdate.data)
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      qc.invalidateQueries({ queryKey: ['driver-routes'] })
+      qc.invalidateQueries({ queryKey: ['driver-orders-for-routes'] })
+    },
+    onError: (err) => {
+      console.error('❌ useRecordDelivery error:', err.message)
+    },
+  })
+}
+
+/**
+ * Hook para registar retificação (faturação)
+ * Adiciona nota de crédito ou fatura complementar à delivery
+ */
+export function useAddRectification() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ orderId, rectification }) => {
+      const orderRef = doc(db, 'orders', orderId)
+      const snap = await getDoc(orderRef)
+      const data = snap.data()
+      const delivery = data?.delivery || {}
+      const existing = delivery.rectifications || []
+
+      await updateDoc(orderRef, {
+        'delivery.rectifications': [...existing, rectification],
+        'delivery.discrepancyStatus': 'resolvida',
+        hasDeliveryIssues: false,
+      })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] })
+    },
   })
 }
 
@@ -126,7 +208,6 @@ async function createShippingGuideForBulkSuborder(order, orderId, profile) {
       }
     })
     
-    console.log(`✅ Shipping guide created: ${guideRef.id}`)
     return guideRef.id
   } catch (err) {
     console.error('❌ Error creating shipping guide:', err)
@@ -140,8 +221,6 @@ async function distributeBulkBatchItems(bulkBatchId, bulkBatchOrder, profile) {
     const bulkSubOrderIds = bulkBatchOrder.bulkSubOrderIds || []
     const aggregatedItems = bulkBatchOrder.items || {}
     
-    console.log(`📦 Distribuindo items para ${bulkSubOrderIds.length} subencomendas...`)
-    
     if (bulkSubOrderIds.length === 0) {
       console.log('⚠️ Nenhuma subencomenda associada')
       return
@@ -152,8 +231,6 @@ async function distributeBulkBatchItems(bulkBatchId, bulkBatchOrder, profile) {
       bulkSubOrderIds.map(id => getDoc(doc(db, 'orders', id)))
     )
     const subencomendas = suborderDocs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.id)
-    
-    console.log(`✅ ${subencomendas.length} subencomendas carregadas`)
     
     // Batch update: distribuir items de volta
     const distribBatch = writeBatch(db)
@@ -193,7 +270,6 @@ async function distributeBulkBatchItems(bulkBatchId, bulkBatchOrder, profile) {
     })
     
     await distribBatch.commit()
-    console.log(`✅ Items distribuídos para todas as subencomendas`)
     
   } catch (err) {
     console.error('❌ Error distributing bulk batch items:', err)
